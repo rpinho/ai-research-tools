@@ -47,3 +47,31 @@ def test_claude_launcher_binds_route_and_outcome(tmp_path):
     outcome = json.loads(next(line.split(' ', 1)[1] for line in log.splitlines() if line.startswith('MODEL_OUTCOME ')))
     assert outcome['executor'] == 'claude' and outcome['exit_code'] == 7
     assert (jobs/'fixture.last.md').read_text() == 'fixture\n'
+
+
+def test_claude_result_error_cannot_be_a_successful_exit(tmp_path):
+    import os
+    repo = Path(__file__).resolve().parents[1]
+    fake = tmp_path/'fake-cli'
+    fake.write_text('#!'+sys.executable+'\nprint(\'{"is_error":true,"subtype":"error_max_budget_usd"}\')\n')
+    fake.chmod(0o755)
+    proc = subprocess.run([sys.executable, str(repo/'harness/agent_executor.py'),
+        '--backend', 'claude', '--executable', str(fake), '--model', 'fixture',
+        '--effort', 'low', '--directory', str(tmp_path), '--output', str(tmp_path/'last')],
+        capture_output=True, timeout=10)
+    assert proc.returncode == 1
+
+
+def test_toy_timeout_terminates_its_owned_process_group(tmp_path):
+    import os
+    import signal
+    import time
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'examples'))
+    from toy_worker import launch
+    pidfile = tmp_path/'pid'
+    worker = tmp_path/'worker.py'
+    worker.write_text('import os,time\nfrom pathlib import Path\nPath('+repr(str(pidfile))+').write_text(str(os.getpid()))\ntime.sleep(60)\n')
+    assert launch([sys.executable, str(worker)], dict(os.environ), timeout=.5) == 124
+    pid = int(pidfile.read_text())
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

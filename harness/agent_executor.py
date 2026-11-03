@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build explicit backend commands; inherit authentication from the caller."""
 import argparse
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -41,7 +42,16 @@ def main(argv=None):
             out.write(block)
             sys.stdout.buffer.write(block)
             sys.stdout.buffer.flush()
-        return proc.wait()
+        code = proc.wait()
+    if code == 0:
+        try:
+            result = json.loads(a.output.read_text())
+        except ValueError:
+            print('Claude returned invalid result JSON', file=sys.stderr)
+            return 1
+        if result.get('is_error') or result.get('subtype') != 'success':
+            return 1
+    return code
 
 
 if __name__ == '__main__':

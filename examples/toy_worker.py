@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
@@ -14,6 +15,26 @@ sys.path[:0] = [str(REPO/'harness'), str(REPO/'selection'), str(REPO/'examples')
 import sweep
 import toy_demo
 from selection_gate import decide, write_receipt, verify_receipt
+
+
+def launch(command, env, timeout=180):
+    """A timed-out tutorial must not leave a billable descendant running."""
+    proc = subprocess.Popen(command, env=env, start_new_session=True)
+    try:
+        return proc.wait(timeout=timeout)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        # The launcher may exit before a descendant; clean the entire owned group.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        return 124
 
 
 def verify(root, backend):
@@ -79,11 +100,10 @@ Finish with a short receipt. Use no other tools or files.
     # Ambient role/model overrides cannot alter the documented toy command.
     for key in ('LAUNCH_MODEL', 'LAUNCH_MODEL_OVERRIDE', 'LAUNCH_RESUME', 'LAUNCH_IDEA', 'LAUNCH_IDEA_ROOT'):
         env.pop(key, None)
-    proc = subprocess.run(['zsh', str(REPO/'tools/launch.sh'), 'toy-worker', str(lane)],
-                          env=env, timeout=180)
-    if proc.returncode:
+    code = launch(['zsh', str(REPO/'tools/launch.sh'), 'toy-worker', str(lane)], env)
+    if code:
         print((jobs/'toy-worker.log').read_text(), file=sys.stderr)
-        return proc.returncode
+        return code
     verify(root, backend)
     return 0
 
