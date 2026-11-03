@@ -31,6 +31,8 @@ Pass `policy_version=2` explicitly to `decide`, with a policy declaration,
 fresh-rerun evidence, a sealed-scoring ledger and an optimism ledger. The
 [policy schema](selection_gate/policy.py) and [implementation](selection_gate/v2.py)
 are the source of truth; [synthetic tests](tests/test_v2.py) demonstrate complete inputs.
+The [harness guide](../harness/docs/selection.md) covers freeze, trial, scoring,
+and lint integration. `RH_SELECTION_GATE` overrides the bundled package location.
 No live run fixtures or lane datasets are included.
 
 Version 2 validates group/time/source/random split declarations, fold-local

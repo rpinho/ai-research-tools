@@ -74,7 +74,7 @@ integration test, but does not prove authentication in an empty HOME.
 
 ## Enforced contracts
 
-- [Sealed selection](docs/sealed-selection.md): a [selection package](selection/README.md) computes conservative decisions and hashes artifacts; promotion freezes a test/pass line. The [overfitting map](docs/overfitting.md) distinguishes defaults, optional checks and missing controls.
+- [Sealed selection](docs/sealed-selection.md): a [selection package](selection/README.md) computes conservative decisions and hashes artifacts; promotion freezes a test/pass line. The opt-in [v2 harness policy](harness/docs/selection.md) adds frozen declarations, trial accounting and replayed scoring evidence. The [overfitting map](docs/overfitting.md) distinguishes defaults, optional checks and missing controls.
 - [Idea intake, sweeps and kill-tests](docs/idea-intake.md): append-only idea events, source screening, required rule files, bounded workers and result receipts.
 - [Lane cadence, lint and alerts](docs/lane-cadence.md): delivery checks remain active when workers are disabled; lane-health alerts enter an agent queue.
 - [Pods and harvesting](docs/pods.md): ownership, capacity receipts, atomic claims, deadlines and verified copies before supported shutdown paths.

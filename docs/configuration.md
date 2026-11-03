@@ -5,6 +5,7 @@ Use an isolated writable root with `python3 harness/rh.py --root PATH ...`. It c
 | Setting | Meaning |
 |---|---|
 | `RH_POD_LANES` | Comma-separated eligible pod lane names; empty by default. |
+| `RH_SELECTION_GATE` | Optional selection package root; defaults to bundled `selection/` beside `harness/`. `~` expands. V2 requires NumPy. |
 | `RH_POLICY_EXCLUDED` | Explicit legacy evidence-policy exemptions; empty by default. New deployments should keep it empty. The capacity hook also recognizes these exemptions. |
 | `RH_REAP_EXCLUDED` | Comma-separated protected pod names or lane names; empty by default. |
 | `RH_ROLES_FILE` | Local generated roles/routes JSON; default `.runtime/roles.json`. |

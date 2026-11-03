@@ -28,6 +28,7 @@ import outreach
 import cadence
 import lane_alerts
 import idea_policy
+import selection_policy
 import pods
 import uuid
 import xml.etree.ElementTree as ET
@@ -259,6 +260,9 @@ def validate_config(cfg):
         raise ValueError('depth_tags must be a list of tag strings')
     if 'minimum_attempts' in cfg and (type(cfg['minimum_attempts']) is not int or cfg['minimum_attempts'] < 2):
         raise ValueError('minimum_attempts must be an integer >= 2')
+    for key, minimum in (('selection_min_measurements', 2), ('selection_sealed_budget', 1), ('selection_submissions', 1)):
+        if key in cfg and (type(cfg[key]) is not int or cfg[key] < minimum):
+            raise ValueError('{} must be an integer >= {}'.format(key, minimum))
     for rule in cfg.get('banned_patterns', []):
         # TOML scopes every key after a [[banned_patterns]] header INTO that table, so a lane key
         extra = sorted(k for k in rule if k not in ('pattern', 'reason'))
@@ -638,7 +642,7 @@ def lint_result(lane, report=None):
             errors.add('closed-evidence', 'IDEAS.jsonl row {}: closed requires existing result_path or closed_reason'.format(i))
         if row.get('source_type') in EXTERNAL and not row.get('source_url', '').strip():
             errors.add('source-url', 'IDEAS.jsonl row {}: external source requires source_url'.format(i))
-    policy_errors, policy_warnings = idea_policy.audit(history, lane, cfg.get('minimum_attempts', 2))
+    policy_errors, policy_warnings = idea_policy.audit(history, lane, cfg.get('minimum_attempts', 2), selection_config=cfg)
     errors.add_many('idea-policy', policy_errors)
     sweep_errors, grandfathered = sweep.lint(lane, sys.modules[__name__])
     errors.add_many('sweep-obligations', sweep_errors)
@@ -748,6 +752,19 @@ def parser():
     a.add_argument('--baseline', required=True)
     a.add_argument('--query', required=True)
     a.add_argument('--paper-query')
+    selection = sub.add_parser('selection', help='v2 trial accounting and sealed selection').add_subparsers(dest='action', required=True)
+    for action in ('trial', 'score'):
+        a = selection.add_parser(action)
+        a.add_argument('lane')
+        a.add_argument('id')
+        if action == 'trial':
+            a.add_argument('--trial-id', required=True)
+            a.add_argument('--name', required=True)
+            a.add_argument('--status', required=True, choices=('completed', 'pruned'))
+            a.add_argument('--tuned-score', type=float)
+        else:
+            a.add_argument('--evidence', type=Path, required=True)
+            a.add_argument('--output', type=Path, required=True)
     ideas = sub.add_parser('ideas').add_subparsers(dest='action', required=True)
     a = ideas.add_parser('show', help='show one idea by unique ID/prefix across lanes (JSON)')
     a.add_argument('id')
@@ -792,6 +809,8 @@ def parser():
         if action in ('close', 'promote', 'freeze'):
             a.add_argument('--decided-by', default='', help='model that made the call (env RH_DECIDED_BY, else this Claude session)')
         if action in ('promote', 'freeze'):
+            a.add_argument('--policy-version', type=int, choices=(1, 2), default=1)
+            a.add_argument('--selection-policy', type=Path, help='v2 freeze declaration JSON')
             holdout = a.add_mutually_exclusive_group()
             holdout.add_argument('--sealed-holdout', action='store_true', help='targets are sealed from the producing worker; lane gate still enforces access')
             holdout.add_argument('--no-holdout-reason', default='', help='why this experiment has no statistical holdout, e.g. exact certificate')
@@ -880,6 +899,24 @@ def main(argv=None):
             return 0
         if args.command == 'answers-sync':
             return answers_sync(lane, args.answers_file.expanduser())
+        if args.command == 'selection':
+            with locked(lane):
+                history = rows(lane/'IDEAS.jsonl')
+                current = latest(history)
+                if args.id not in current:
+                    raise ValueError('unknown idea id: ' + args.id)
+                row = dict(current[args.id])
+                if args.action == 'trial':
+                    trial = dict(id=args.trial_id, name=args.name, status=args.status)
+                    if args.tuned_score is not None:
+                        trial['tuned_score'] = args.tuned_score
+                    selection_policy.add_trial(row, trial)
+                else:
+                    decision = selection_policy.score(row, lane, args.evidence, args.output, lane_config(lane))
+                    print(json.dumps(decision, sort_keys=True))
+                row.update(revised=now(), event='selection-' + args.action)
+                append(lane/'IDEAS.jsonl', row)
+            return 0
         if args.action == 'read':
             sweep.mark_read(lane, args.id, args.report, sys.modules[__name__])
             print(args.id + ' read')
@@ -925,7 +962,7 @@ def main(argv=None):
                     result = args.result_path.expanduser().resolve()
                     if row['status'] != 'testing' or not result.is_file() or not result.read_text().strip():
                         raise ValueError('result requires status=testing and a nonempty existing result file')
-                    if idea_policy.enabled(lane):
+                    if idea_policy.enabled(lane) or row.get('policy_version') == 2:
                         idea_policy.record_result(row, result, args.config_path)
                     else:
                         row.update(result_path=str(result))
@@ -951,7 +988,7 @@ def main(argv=None):
                     if not (row.get('prior_art') and Path(row['prior_art']).is_file()):
                         raise ValueError('promote needs --prior-art FILE: the best public method and its number, '
                                          'reproduced as the baseline (prior-art-first)')
-                    if idea_policy.enabled(lane):
+                    if idea_policy.enabled(lane) or args.policy_version == 2:
                         try:
                             receipt = idea_policy.prior_art(row['prior_art'])
                         except ValueError as exc:
@@ -960,7 +997,11 @@ def main(argv=None):
                                              'X also requires a real capture for this KEY.') from exc
                         row['prior_art_sha256'] = receipt['sha256']
                         if row.get('board', '').strip() != 'none':
-                            idea_policy.freeze(row, args.sealed_holdout, args.no_holdout_reason)
+                            declaration = json.loads(args.selection_policy.expanduser().read_text()) if args.selection_policy else None
+                            if args.policy_version == 2:
+                                selection_policy.lane_policy(declaration, lane_config(lane))
+                            idea_policy.freeze(row, args.sealed_holdout, args.no_holdout_reason,
+                                               policy_version=args.policy_version, selection=declaration)
                     who = decider(args.decided_by)
                     error = taste_error(who) or promotion_error(row)
                     if error:
@@ -976,7 +1017,7 @@ def main(argv=None):
                     result = Path(args.result_path).expanduser().resolve() if args.result_path else None
                     if args.result_path and not result.is_file():
                         raise ValueError('result_path must point to an existing file')
-                    if not result and not args.closed_reason.strip() and not (idea_policy.enabled(lane) and args.no_test_reason.strip()):
+                    if not result and not args.closed_reason.strip() and not ((idea_policy.enabled(lane) or row.get('policy_version') == 2) and args.no_test_reason.strip()):
                         raise ValueError('close requires existing result_path or non-empty closed_reason')
                     who = decider(args.decided_by)
                     if args.mechanical:
@@ -986,7 +1027,7 @@ def main(argv=None):
                         error = taste_error(who)
                         if error:
                             raise ValueError(error)
-                    if idea_policy.enabled(lane):
+                    if idea_policy.enabled(lane) or row.get('policy_version') == 2:
                         if result:
                             if row.get('result_path') != str(result) or not row.get('attempt_records'):
                                 if row['status'] != 'testing':
@@ -998,7 +1039,7 @@ def main(argv=None):
                         if error:
                             raise ValueError(error)
                         row.update(no_test_reason=args.no_test_reason.strip(), attempts_declared=args.attempts, close_result_supplied=bool(result))
-                    row.update(status='closed', result_path=str(result) if result else row.get('result_path', ''), closed_reason=args.closed_reason.strip() or (args.no_test_reason.strip() if idea_policy.enabled(lane) else ''),
+                    row.update(status='closed', result_path=str(result) if result else row.get('result_path', ''), closed_reason=args.closed_reason.strip() or (args.no_test_reason.strip() if idea_policy.enabled(lane) or row.get('policy_version') == 2 else ''),
                                decided_by=who, mechanical=bool(args.mechanical),
                                close_kind=args.close_kind or ('bar-failed' if args.mechanical else ''))
                 row.update(revised=now(), event=args.action)

@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import selection_policy
 
 EXCLUDED = settings.names('RH_POLICY_EXCLUDED')
 SOURCES = ('github', 'x', 'papers', 'leaderboards')
@@ -92,12 +93,26 @@ def prior_art(path):
 
 
 def frozen_payload(row):
-    return {k: row.get(k, '') for k in ('board', 'test', 'bar', 'holdout_policy', 'holdout_reason')}
+    keys = ('board', 'test', 'bar', 'holdout_policy', 'holdout_reason')
+    if row.get('policy_version') == 2:
+        keys += ('policy_version', 'selection_policy')
+    return {k: row.get(k, '') for k in keys}
 
 
-def freeze(row, sealed=False, no_holdout_reason='', clock=None):
+def freeze(row, sealed=False, no_holdout_reason='', clock=None, *, policy_version=None, selection=None):
     if bool(sealed) == bool(no_holdout_reason.strip()):
         raise ValueError('declare --sealed-holdout OR --no-holdout-reason (e.g. exact certificate); never self-score a holdout')
+    version = row.get('policy_version', 1) if policy_version is None else policy_version
+    if type(version) is not int or version not in (1, 2):
+        raise ValueError('unsupported policy_version')
+    if version == 2:
+        selection = selection if selection is not None else row.get('selection_policy')
+        selection_policy.validate(selection)
+        selection = json.loads(json.dumps(selection, allow_nan=False))
+        row.update(policy_version=2, selection_policy=selection,
+                   n_trials_total=selection['n_trials_total'], trial_records=selection.get('trials', []))
+    elif selection is not None:
+        raise ValueError('selection declaration requires policy_version=2')
     row.update(holdout_policy='sealed' if sealed else 'not-applicable',
                holdout_reason=no_holdout_reason.strip(), sealed_holdout=bool(sealed))
     payload = frozen_payload(row)
@@ -116,6 +131,11 @@ def frozen_error(row):
             return 'frozen bar timestamp must be in the past and include timezone'
     except (AttributeError, TypeError, ValueError):
         return 'invalid frozen bar timestamp'
+    if row.get('policy_version') == 2:
+        try:
+            selection_policy.validate(row.get('selection_policy'))
+        except (ValueError, TypeError, KeyError) as exc:
+            return str(exc)
     payload = frozen_payload(row)
     if row.get('frozen_bar_sha256') != digest(payload) or any(frozen.get(k) != v for k,v in payload.items()):
         return 'frozen bar changed (board, test, bar or holdout disposition)'
@@ -146,6 +166,7 @@ def record_result(row, result, config, clock=None):
             raise ValueError('expected nonempty object')
     except (ValueError, TypeError) as exc:
         raise ValueError('--config-path requires a nonempty JSON configuration object: ' + str(exc))
+    selection_policy.check_config(row, parameters)
     semantic_sha = digest(parameters)  # Cosmetic JSON formatting is not another config.
     records = list(row.get('attempt_records', []))
     # One artifact cannot manufacture a second attempt. Distinct runs may measure the same value.
@@ -308,10 +329,10 @@ def resolutions(history, lane):
     return superseded, exceptions, errors
 
 
-def audit(history, lane, minimum=2):
+def audit(history, lane, minimum=2, selection_config=None):
     """Aggregate by idea, preserving original freeze and result bytes across revisions."""
     if not enabled(lane):
-        return [], []
+        return selection_policy.audit(history, lane, selection_config), []
     groups = {}
     for row in history:
         groups.setdefault(row['id'], []).append(row)
@@ -405,4 +426,5 @@ def audit(history, lane, minimum=2):
             configs = {r['config_sha256'] for r in last['attempt_records']}
             if len(configs) < minimum:
                 warnings.append('idea {}: closed after only one distinct config; no second variant recorded'.format(key))
+    errors.extend(selection_policy.audit(history, lane, selection_config))
     return list(dict.fromkeys(errors)), list(dict.fromkeys(warnings))
