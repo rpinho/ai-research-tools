@@ -31,6 +31,8 @@ import cadence
 import lane_alerts
 import idea_policy
 import selection_policy
+import verification
+from verification import verification_line
 import pods
 import uuid
 import xml.etree.ElementTree as ET
@@ -238,6 +240,8 @@ def config_value(value):
 
 
 def validate_config(cfg):
+    if not isinstance(cfg.get("verification_required", False), bool):
+        raise ValueError("verification_required must be true or false")
     # board-deciding questions through a Claude Science session; lint and promote enforce it.
     if not isinstance(cfg.get('claude_science_required', False), bool):
         raise ValueError('claude_science_required must be true or false')
@@ -300,6 +304,9 @@ def ingest(lane, hits, cfg, dry_run=False, session='intake'):
             row.update(status='closed', closed_reason='; '.join(reasons),
                        data_tags=['BANNED:' + reason for reason in reasons],
                        no_test_reason='metadata excluded by lane rule: ' + '; '.join(reasons))
+            if cfg.get('verification_required', False):
+                row.update(verification='L0', finite_component='none', verification_policy_version=1,
+                           verification_required_at_close=True)
         print(('WOULD ADD ' if dry_run else 'ADDED ') + json.dumps(row, ensure_ascii=False))
         if not dry_run:
             append(lane / 'IDEAS.jsonl', row)
@@ -666,6 +673,11 @@ def lint_result(lane, report=None):
             errors.add('closed-evidence', 'IDEAS.jsonl row {}: closed requires existing result_path or closed_reason'.format(i))
         if row.get('source_type') in EXTERNAL and not row.get('source_url', '').strip():
             errors.add('source-url', 'IDEAS.jsonl row {}: external source requires source_url'.format(i))
+    for i, row in enumerate(history, 1):
+        if row.get('event') in ('result', 'close') or row.get('status') == 'closed':
+            required = cfg.get('verification_required', False) and verification.new_close(row)
+            for error in verification.validate_row(row, lane, required=required):
+                errors.add('verification', 'IDEAS.jsonl row {} id={}: {}'.format(i, row.get('id'), error))
     policy_errors, policy_warnings = idea_policy.audit(history, lane, cfg.get('minimum_attempts', 2), selection_config=cfg)
     errors.add_many('idea-policy', policy_errors)
     sweep_errors, grandfathered = sweep.lint(lane, sys.modules[__name__])
@@ -822,6 +834,9 @@ def parser():
         if action == 'result':
             a.add_argument('--result-path', type=Path, required=True)
         if action in ('result', 'close'):
+            a.add_argument('--verification', choices=verification.LEVELS)
+            a.add_argument('--finite-component', choices=verification.LEVELS + ('none',))
+            a.add_argument('--verification-evidence', type=Path, help='verification metadata JSON; evidence paths relative to the lane')
             a.add_argument('--config-path', type=Path, help='nonempty JSON configuration used for this attempt')
         if action == 'close':
             a.add_argument('--attempts', type=int, help='number of recorded attempts; needs >= lane minimum distinct configs')
@@ -995,6 +1010,8 @@ def main(argv=None):
                 if args.id not in current:
                     raise ValueError('unknown idea id: ' + args.id)
                 row = dict(current[args.id])
+                if args.action in ('result', 'close'):
+                    verification.apply_metadata(row, args, lane, required=(args.action == 'close' and lane_config(lane).get('verification_required', False)))
                 if args.action == 'reopen':
                     if row['status'] != 'closed':
                         raise ValueError('reopen requires status=closed')

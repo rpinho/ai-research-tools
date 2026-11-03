@@ -17,6 +17,7 @@ The last command writes monitor state and alerts. A real sweep launches workers;
 |---|---|
 | `rh.py` | Idea CLI, metadata intake, source screening, append-only revisions and lint. |
 | `idea_policy.py` | Frozen bars, config/result hashes, source receipts and explicit close contracts. |
+| `verification.py` | [Verification levels L0–L3](../docs/verification.md), whole/finite evidence validation and optional publication checks. |
 | `sweep.py` | Policy compiler, search/read/kill stages, resource guards and carry-over. |
 | `cadence.py`, `lane_alerts.py` | Delivery evidence and durable alerts to agents. |
 | `pods.py`, `pod/runner.py` | Registry, monitoring, ownership, capacity, claims, reaping and local pod runner. |

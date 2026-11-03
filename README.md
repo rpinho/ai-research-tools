@@ -82,6 +82,7 @@ integration test, but does not prove authentication in an empty HOME.
 - [Lane cadence, lint and alerts](docs/lane-cadence.md): delivery checks remain active when workers are disabled; lane-health alerts enter an agent queue.
 - [Pods and harvesting](docs/pods.md): ownership, capacity receipts, atomic claims, deadlines and verified copies before supported shutdown paths.
 - [Prior-art receipts](docs/prior-art.md): promotion requires structured source dispositions, a baseline and captured evidence.
+- [Verification levels L0–L3](docs/verification.md): scoped whole-result and finite-component claims, hashed checker or Lean receipts, and opt-in close/lint checks.
 - [Outreach](docs/outreach.md): draft, lint, approve exact bytes, then record a separate send. The harness has no send function.
 
 The [science rules](tools/RULES.md) are a job-spec template. They distinguish requirements enforced by code from responsibilities of the experiment owner. The [harness reference](harness/README.md) lists commands and the [migration notes](harness/MIGRATION.md) explain changes from a machine-local installation.
