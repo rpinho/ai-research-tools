@@ -9,9 +9,21 @@ interview only for missing facts. For unattended toy setup, use a provisional
 `--split-reason`, and record that the organizer's sampling is unverified. Random
 requires affirmative shared-unit evidence, never a convenience justification.
 
-Run `.venv/bin/rh --root .runtime lane new NAME --help`, then that command with
-all required facts. Set `--sealed-set-id` to the fixed organizer hidden test
-identifier; an unavailable manifest is a declared identifier, not verified data.
+Run `.venv/bin/rh --root .runtime lane new NAME --help`, then fill this form.
+Pass the positional NAME exactly once, immediately after `new`:
+
+```sh
+.venv/bin/rh --root .runtime lane new NAME \
+  --problem 'USER_PROBLEM' --metric 'USER_METRIC' \
+  --dev-set 'DEV_IDENTIFIER' --hidden-test 'HIDDEN_IDENTIFIER' \
+  --split group --split-reason 'PROVISIONAL_REASON_AND_UNVERIFIED_SAMPLING' \
+  --sealed-set-id 'FIXED_ORGANIZER_HIDDEN_IDENTIFIER' \
+  --deadline-days 7 --submissions 2 --submission-rules 'USER_SUBMISSION_RULES'
+```
+
+Adapt the deadline, split and counts to the prompt. Record only supplied organizer
+rules; operational bans belong in RULES.md. An unavailable hidden manifest means
+a declared identifier, not verified data.
 Keep the default one sealed-selector batch separate from the allowed upload count
 (`--submissions`). Use `--deadline-days` for relative deadlines. For exact-match
 sequence toys the default development test and baseline bar apply; supply
