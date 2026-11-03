@@ -21,3 +21,7 @@ preprocessing, fixed-step final fit, ten measurements, and zero trials.
 Run `.venv/bin/rh --root .runtime lint NAME`. Do not create fake trials, reading
 receipts or scores to satisfy lint. Inspect the generated `LANE.json` and
 `SELECTION.json`; report assumptions and leave workers disabled.
+
+Frozen fields are immutable from creation. If sampling assumptions, the sealed
+identifier, test, bar or rules later change, create a new lane with corrected
+declarations. Never tell the user to edit or replace a frozen field in place.

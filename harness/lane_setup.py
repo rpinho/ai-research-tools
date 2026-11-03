@@ -114,6 +114,7 @@ Keep workers bounded by SWEEP.toml. Send deletions to Trash.
     if problems:
         raise ValueError('; '.join(problems))
     print('Created {}: frozen v2 declarations; workers disabled; no results or external reads claimed'.format(lane))
+    print('Frozen declarations are immutable; changed assumptions require a new lane.')
     print('Next: rh --root {} lint {}'.format(root, args.name))
     return 0
 
