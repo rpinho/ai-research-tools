@@ -156,6 +156,8 @@ def remote_read(pod, timeout=60):
                     raise ValueError('pod probe output exceeded limit')
 
     def send(command):
+        command = command.replace('/sys/fs/cgroup', shlex.quote(os.environ.get('RH_REMOTE_CGROUP_ROOT', '/sys/fs/cgroup')))
+        command = command.replace('/proc/uptime', shlex.quote(os.environ.get('RH_REMOTE_UPTIME', '/proc/uptime')))
         p.stdin.write((command + '\n').encode())
         p.stdin.flush()
 
@@ -1423,7 +1425,7 @@ def runner_main(argv=None):
     parser = argparse.ArgumentParser(description='On-pod slot runner; never run serve on the controller')
     parser.add_argument('mode', choices=('serve', 'attach'))
     parser.add_argument('--socket', type=Path, default=settings.path('RH_RUNNER_SOCKET', Path('.runtime/rh-pod-runner.sock')))
-    parser.add_argument('--workspace', type=Path, default=Path('/workspace'))
+    parser.add_argument('--workspace', type=Path, default=settings.path('RH_POD_WORKSPACE', Path('/workspace')))
     parser.add_argument('--vcpus', type=float)
     parser.add_argument('--gpus', type=int)
     parser.add_argument('--lane', choices=sorted(LANES))
@@ -1562,10 +1564,11 @@ def terminate_self():
         raise ValueError('pod termination rejected')
 
 
-def local_resources(cgroup=Path('/sys/fs/cgroup'), nproc=None, gpu_probe=None):
+def local_resources(cgroup=None, nproc=None, gpu_probe=None):
     """Pod-measured allowance, not driver concurrency; cgroup v1 and v2."""
     if nproc is None:
         nproc = len(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else os.cpu_count()
+    cgroup = cgroup if cgroup is not None else settings.path('RH_CGROUP_ROOT', Path('/sys/fs/cgroup'))
     cpu_max = cgroup / 'cpu.max'
     quota = cpu_max.read_text() if cpu_max.exists() else 'max 100000'
     if not cpu_max.exists():

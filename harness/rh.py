@@ -627,14 +627,14 @@ def lint_result(lane, report=None):
             if error:
                 errors.add('idea-promotion-or-taste', 'IDEAS.jsonl row {} id={}: {}'.format(i, row.get('id'), error))
         if row.get('event') == 'promote' and row.get('revised', '') >= TASTE_RULE_FROM \
-                and not Path(row.get('prior_art') or '/nonexistent-rh').is_file():
+                and not (row.get('prior_art') and Path(row['prior_art']).is_file()):
             errors.add('prior-art', 'IDEAS.jsonl row {} id={}: promoted without a prior-art file'.format(i, row.get('id')))
         if row.get('event') in ('promote', 'close') and row.get('revised', '') >= TASTE_RULE_FROM \
                 and not (row.get('event') == 'close' and row.get('mechanical')):
             error = taste_error(row.get('decided_by', ''))
             if error:
                 errors.add('idea-promotion-or-taste', 'IDEAS.jsonl row {} id={}: {}'.format(i, row.get('id'), error))
-        if row.get('status') == 'closed' and not (row.get('closed_reason', '').strip() or Path(row.get('result_path') or '/nonexistent-rh-result').is_file()):
+        if row.get('status') == 'closed' and not (row.get('closed_reason', '').strip() or (row.get('result_path') and Path(row['result_path']).is_file())):
             errors.add('closed-evidence', 'IDEAS.jsonl row {}: closed requires existing result_path or closed_reason'.format(i))
         if row.get('source_type') in EXTERNAL and not row.get('source_url', '').strip():
             errors.add('source-url', 'IDEAS.jsonl row {}: external source requires source_url'.format(i))
@@ -948,7 +948,7 @@ def main(argv=None):
                         raise ValueError('claude-science idea: pass --independent-check (what we re-verified outside Claude Science)')
                     if args.prior_art is not None:
                         row['prior_art'] = str(Path(args.prior_art).expanduser().resolve())
-                    if not Path(row.get('prior_art') or '/nonexistent-rh').is_file():
+                    if not (row.get('prior_art') and Path(row['prior_art']).is_file()):
                         raise ValueError('promote needs --prior-art FILE: the best public method and its number, '
                                          'reproduced as the baseline (prior-art-first)')
                     if idea_policy.enabled(lane):

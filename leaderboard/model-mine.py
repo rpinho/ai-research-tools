@@ -57,7 +57,7 @@ def scan_bookmarks(since):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.environ.get("TMPDIR", "/tmp") + "/model-mine")
+    ap.add_argument("--out", default=os.environ.get("MODEL_MINE_OUT", ".runtime/model-mine"))
     ap.add_argument("--since", default=None, help="ignore items before this YYYY-MM-DD")
     ap.add_argument("--archive", type=Path, required=True, help="root containing raw/bookmarks/*.json")
     a = ap.parse_args()

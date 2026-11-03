@@ -23,3 +23,20 @@ def test_default_routes_and_contacts_are_workspace_relative():
     assert worker_models.ROLES_FILE == Path('.runtime/roles.json')
     assert rh.ROLES_FILE == Path('.runtime/roles.json')
     assert outreach.CONTACTS == Path('.runtime/contacts.json')
+
+
+def test_missing_evidence_does_not_probe_absolute_sentinels(monkeypatch):
+    import idea_policy
+    import pytest
+    def forbidden(*args, **kwargs):
+        raise AssertionError('missing evidence must not touch files')
+    monkeypatch.setattr(Path, 'is_file', forbidden)
+    with pytest.raises(ValueError, match='path is required'):
+        idea_policy.file_hash(None)
+
+
+def test_linux_resource_root_is_configurable(tmp_path, monkeypatch):
+    import pods
+    (tmp_path/'cpu.max').write_text('100000 100000')
+    monkeypatch.setenv('RH_CGROUP_ROOT', str(tmp_path))
+    assert pods.local_resources(nproc=8, gpu_probe=lambda: '') == (1.0, 0)

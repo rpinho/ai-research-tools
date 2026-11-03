@@ -58,3 +58,14 @@ and preapproved file tools, without an OS sandbox from this runner. External
 access and credentials belong to the caller. No watchdog is installed.
 
 Launchd templates under [harness/templates](../harness/templates) contain `@...@` placeholders. Render them into your own scheduler directory, choose Python and root paths, and inspect before loading. Template files are not active jobs. Linux users can schedule the same commands with their existing scheduler.
+
+Linux/container system files are the only absolute data defaults. They are named
+configuration settings, rather than private-machine locations:
+`RH_MEMINFO` defaults to `/proc/meminfo`; `RH_CGROUP_ROOT` defaults to
+`/sys/fs/cgroup`; remote probes use `RH_REMOTE_CGROUP_ROOT` (default
+`/sys/fs/cgroup`) and `RH_REMOTE_UPTIME` (default `/proc/uptime`).
+`RH_POD_WORKSPACE` defaults to the container contract `/workspace` and can also
+be overridden with `--workspace`. Harvest's `/workspace/` check is a remote-path
+allowlist, not discovery of local files. `MODEL_MINE_OUT` defaults to
+`.runtime/model-mine` and `--out` overrides it. Missing evidence fails directly,
+without probing a made-up absolute sentinel file.

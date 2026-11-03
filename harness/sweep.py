@@ -453,7 +453,7 @@ def free_memory_gib():
             if not all(k in counts for k in ('Pages free', 'Pages inactive', 'Pages speculative')):
                 raise ValueError('incomplete vm_stat')
             return sum(counts[k] for k in ('Pages free', 'Pages inactive', 'Pages speculative')) * size / 1024**3
-        output = Path('/proc/meminfo').read_text()
+        output = settings.path('RH_MEMINFO', Path('/proc/meminfo')).read_text()
         return int(re.search(r'^MemAvailable:\s+(\d+)', output, re.M).group(1)) / 1024**2
     except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
         return None

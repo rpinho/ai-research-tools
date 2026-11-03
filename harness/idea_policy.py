@@ -30,6 +30,7 @@ def digest(value):
 
 
 def file_hash(path):
+    if not path: raise ValueError("evidence file path is required")
     path = Path(path).expanduser().resolve()
     if not path.is_file():
         raise ValueError('evidence file must exist and be nonempty: ' + str(path))
@@ -84,7 +85,7 @@ def prior_art(path):
             raise ValueError('prior-art {} requires a search outcome note'.format(source))
         if source == 'x':
             # This is captured intake, never permission for a worker to search X.
-            capture, capture_sha = file_hash(entry.get('capture_path') or '/nonexistent-rh-x-capture')
+            capture, capture_sha = file_hash(entry.get('capture_path'))
             if capture_sha != entry.get('capture_sha256'):
                 raise ValueError('prior-art x capture hash mismatch')
     return dict(path=path, sha256=sha, baseline=data['baseline'])
@@ -138,7 +139,7 @@ def record_result(row, result, config, clock=None):
     if row.get('board') == 'none' or row.get('runnable') is False:
         raise ValueError('board=none is routing only; it cannot record an experiment')
     result, result_sha = file_hash(result)
-    config, config_sha = file_hash(config or '/nonexistent-rh-config')
+    config, config_sha = file_hash(config)
     try:
         parameters = json.loads(Path(config).read_text())
         if not isinstance(parameters, dict) or not parameters:
@@ -176,7 +177,7 @@ def attempts_error(row):
             return 'invalid attempt/frozen timestamp'
         for field, hashfield in (('result_path','result_sha256'), ('config_path','config_file_sha256')):
             try:
-                if file_hash(attempt.get(field) or '/nonexistent-rh-attempt')[1] != attempt.get(hashfield):
+                if file_hash(attempt.get(field))[1] != attempt.get(hashfield):
                     return 'attempt {} hash mismatch'.format(field)
             except (OSError, ValueError) as exc:
                 return str(exc)
@@ -363,11 +364,11 @@ def audit(history, lane, minimum=2):
             started = row.get('status') in ('testing', 'shipped') and (previous is None or previous.get('status') not in ('testing', 'shipped'))
             if row.get('event') in ('promote', 'freeze') or started:
                 try:
-                    receipt = prior_art(row.get('prior_art') or '/nonexistent-rh-prior-art')
+                    receipt = prior_art(row.get('prior_art'))
                     if receipt['sha256'] != row.get('prior_art_sha256'):
                         (errors if new else warnings).append(label + 'prior-art receipt hash mismatch')
                 except (OSError, ValueError, TypeError) as exc:
-                    (errors if new else warnings).append(label + str(exc))
+                    (errors if new else warnings).append(label + 'prior-art: ' + str(exc))
                 error = frozen_error(row) if row.get('board') != 'none' else ''
                 if error: (errors if new else warnings).append(label + error)
             if row.get('result_path'):
