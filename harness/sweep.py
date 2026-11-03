@@ -88,6 +88,11 @@ def path_at(value, base):
     return (p if p.is_absolute() else base / p).resolve()
 
 
+def default_memory_floor(cfg):
+    """A worker's memory_gib is its cap; it needs far less free to start. Never above 2 GiB by default."""
+    return min(cfg['memory_gib'], 2)
+
+
 def load(lane, rh):
     cfg = rh.config(lane / 'SWEEP.toml')
     if type(cfg.get('enabled')) is not bool:
@@ -126,7 +131,9 @@ def load(lane, rh):
     cfg.setdefault('max_cpu_busy_fraction', .85)
     if type(cfg['max_cpu_busy_fraction']) not in (int, float) or not 0 < cfg['max_cpu_busy_fraction'] <= 1:
         raise ValueError('SWEEP max_cpu_busy_fraction must be in (0, 1]')
-    cfg.setdefault('min_free_memory_gib', cfg['memory_gib'])
+    # memory_gib is a worker's CAP, not what it needs free to start; using it as the floor refused
+    # sweeps on a 16 GB machine that the OS reported as half free. Default floor is 2 GiB.
+    cfg.setdefault('min_free_memory_gib', default_memory_floor(cfg))
     if type(cfg['min_free_memory_gib']) not in (int, float) or cfg['min_free_memory_gib'] <= 0:
         raise ValueError('SWEEP min_free_memory_gib must be positive')
     cfg.setdefault('load_fallback', True)
@@ -452,7 +459,15 @@ def free_memory_gib():
             counts = {k: int(v) for k, v in re.findall(r'^(Pages [\w ]+):\s+(\d+)\.', output, re.M)}
             if not all(k in counts for k in ('Pages free', 'Pages inactive', 'Pages speculative')):
                 raise ValueError('incomplete vm_stat')
-            return sum(counts[k] for k in ('Pages free', 'Pages inactive', 'Pages speculative')) * size / 1024**3
+            vm_gib = sum(counts[k] for k in ('Pages free', 'Pages inactive', 'Pages speculative')) * size / 1024**3
+            # The kernel's own view (memory_pressure) also counts reclaimable file cache; take the larger.
+            try:
+                mp = subprocess.check_output(['memory_pressure', '-Q'], text=True, timeout=10)
+                pct = int(re.search(r'free percentage:\s*(\d+)%', mp).group(1))
+                total = int(subprocess.check_output(['sysctl', '-n', 'hw.memsize'], text=True, timeout=10))
+                return max(vm_gib, pct / 100 * total / 1024**3)
+            except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+                return vm_gib
         output = settings.path('RH_MEMINFO', Path('/proc/meminfo')).read_text()
         return int(re.search(r'^MemAvailable:\s+(\d+)', output, re.M).group(1)) / 1024**2
     except (OSError, ValueError, AttributeError, subprocess.SubprocessError):

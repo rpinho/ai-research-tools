@@ -193,3 +193,18 @@ def test_cancelled_wait_and_worker_guard_refuse_immediately(cfg):
     cfg['_cancel'] = event
     with pytest.raises(ValueError, match='cancelled'):
         sweep.guard(cfg)
+
+
+def test_darwin_memory_uses_kernel_free_percentage_when_larger():
+    vm = ('Mach Virtual Memory Statistics: (page size of 16384 bytes)\n'
+          'Pages free: 100000.\nPages inactive: 100000.\nPages speculative: 0.\n')
+    def fake(cmd, **kw):
+        return {'vm_stat': vm, 'memory_pressure': 'System-wide memory free percentage: 50%\n',
+                'sysctl': str(16 * 1024**3)}[cmd[0]]
+    with patch.object(sweep.sys, 'platform', 'darwin'), patch.object(sweep.subprocess, 'check_output', side_effect=fake):
+        assert sweep.free_memory_gib() == 8.0
+
+
+def test_memory_floor_defaults_below_worker_cap():
+    assert sweep.default_memory_floor({'memory_gib': 6}) == 2
+    assert sweep.default_memory_floor({'memory_gib': 1}) == 1
