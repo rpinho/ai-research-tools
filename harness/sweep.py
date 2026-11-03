@@ -589,6 +589,10 @@ def run_lane(lane, cfg, rh, dry=False):
             due.append(row['id'])
     print('{}: {} rows to read; grandfathered: {}'.format(lane.name, len(due), ','.join(legacy) or 'none'))
     if dry:
+        print('Worker configuration: workers_enabled={}{}'.format(
+            str(cfg.get('workers_enabled', True)).lower(),
+            ' (explicit)' if 'workers_enabled' in cfg else ' (legacy default)'))
+        print('Queue rows are queued ideas, not a count of configured sources.')
         print('DRY RUN: no workers, network, writes or notifications; search -> read -> kill -> check -> at most one repair')
         print('Would write browser handoff: ' + str(lane / 'X_QUERIES.txt'))
         for stage in ('search', 'read', 'kill'):

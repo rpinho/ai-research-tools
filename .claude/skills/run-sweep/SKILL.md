@@ -9,3 +9,6 @@ For an explicitly requested real run, configure sources, routes and bounded
 workers, then set `workers_enabled=true` in SWEEP.toml and invoke the same script
 with `--execute`. It previews again before launching. Never enable workers for a
 preview. Choose `AGENT_BACKEND=codex|claude` per the requested executor.
+
+Report the preview's effective `workers_enabled` setting: new lanes explicitly
+set it to false. An empty idea queue does not mean source configuration is absent.
