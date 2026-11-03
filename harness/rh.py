@@ -25,6 +25,7 @@ import urllib.error
 import time
 import email.utils
 import sweep
+import x_searches
 import outreach
 import cadence
 import lane_alerts
@@ -494,6 +495,26 @@ def intake(lane, args):
         return 1 if errors else 0
 
 
+def intake_x_search(lane, args):
+    """Append a browser search outcome without inventing a URL or idea."""
+    cfg = config(lane / 'INTAKE.toml')
+    validate_config(cfg)
+    capture = cfg.get('x_local_file', '')
+    if not isinstance(capture, str) or not capture.strip() or any(c in capture for c in '\r\n\0'):
+        raise ValueError('intake x-search requires a configured x_local_file')
+    row = dict(utc=now(), query=args.query, result=args.result, n_hits=args.n,
+               captured_by=os.environ.get('RH_CAPTURED_BY') or os.environ.get('USER') or 'general-session')
+    if args.subject is not None:
+        row['subject'] = args.subject
+    x_searches.validate(row)
+    with locked(lane):
+        path = lane / 'X_SEARCHES.jsonl'
+        x_searches.recent(path)  # Do not append to a malformed journal.
+        append(path, row)
+    print('RECORDED X SEARCH ' + json.dumps(row, ensure_ascii=False))
+    return 0
+
+
 def session_model():
     """The current model of the Claude Code session calling us, or None outside one.
 
@@ -840,8 +861,14 @@ def parser():
     a.add_argument('--all', action='store_true', help='check every lane, including disabled workers')
     a.add_argument('--json', action='store_true', help='machine-readable results')
     a.add_argument('--report', type=Path)
-    a = sub.add_parser('intake')
+    a = sub.add_parser('intake', description='Fetch intake with LANE --live, or record a browser outcome with x-search LANE --query Q [--subject S] --result none|hits --n N.')
     a.add_argument('lane')
+    # Preserve `intake LANE --live` while adding `intake x-search LANE ...`.
+    a.add_argument('x_search_lane', nargs='?', help='lane for the x-search action')
+    a.add_argument('--query', help='actual X browser query (x-search only)')
+    a.add_argument('--subject', help='optional author or topic scope (x-search only)')
+    a.add_argument('--result', choices=('none', 'hits'), help='recorded outcome (x-search only)')
+    a.add_argument('--n', type=int, help='hit count: 0 for none, positive for hits (x-search only)')
     group = a.add_mutually_exclusive_group()
     group.add_argument('--dry-run', action='store_true', help='default; no network and no writes')
     group.add_argument('--live', action='store_true', help='fetch metadata and append ideas/intake audit')
@@ -857,6 +884,15 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == 'intake':
+            if args.lane == 'x-search':
+                if not args.x_search_lane or args.query is None or args.result is None or args.n is None:
+                    raise ValueError('intake x-search requires LANE --query Q [--subject S] --result none|hits --n N')
+                if args.live or args.dry_run or args.hits_file:
+                    raise ValueError('intake x-search records a local outcome; do not combine with intake fetch flags')
+                args.lane, args.intake_action = args.x_search_lane, 'x-search'
+            elif args.x_search_lane or any(value is not None for value in (args.query, args.subject, args.result, args.n)):
+                raise ValueError('X search flags require intake x-search LANE')
         if args.command == 'lane':
             return lane_setup.main(args.root, args, sys.modules[__name__])
         if args.command == 'outreach':
@@ -898,6 +934,8 @@ def main(argv=None):
         if not lane.is_dir():
             raise ValueError('lane directory missing: ' + str(lane))
         if args.command == 'intake':
+            if getattr(args, 'intake_action', '') == 'x-search':
+                return intake_x_search(lane, args)
             return intake(lane, args)
         if args.command == 'cs-url':
             # The login link is single-use and expires in ~3 min, so it is minted on demand, never stored.

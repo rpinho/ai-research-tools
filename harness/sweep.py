@@ -20,8 +20,12 @@ import uuid
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import idea_policy
+import x_searches
 
 UTC = dt.timezone.utc
+# Queue intake uses UUIDs; manually authored search ideas also use BOARD-n.
+# Every sweep report parser uses this same contract (no capturing groups).
+ID_PATTERN = r'(?:[A-Z0-9]+-[0-9]+|[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})'
 GITHUB_FIELDS = ('github_repo_queries', 'github_code_queries', 'github_watch_repos',
                  'github_fork_repos', 'github_import_queries')
 
@@ -67,11 +71,15 @@ def x_query_text(lane, cfg):
     capture = cfg.get('x_capture_path')
     capture_step = ('# Capture metadata in ' + str(capture) + '\n' if capture else
                     '# General must configure x_local_file in INTAKE.toml before capturing results.\n')
+    search_step = ('# Record a dated outcome, including zero hits: rh intake x-search '
+                   + shlex.quote(lane.name) + ' --query Q [--subject S] --result none|hits --n N\n'
+                   if capture else '')
     return ('# X browser queries: ' + lane.name + '\n'
             '# General session only; no X API. Workers have no route to X.\n'
             + capture_step
             + '# Then run rh intake ' + shlex.quote(lane.name) + ' --live.\n'
             '# Results reach workers only through intake in IDEAS.jsonl.\n'
+            + search_step
             + '\n'.join(cfg.get('x_queries', [])) + '\n')
 
 
@@ -182,6 +190,8 @@ def complete(text):
 
 
 def read_evidence(report, idea_id):
+    if not re.fullmatch(ID_PATTERN, idea_id):
+        raise ValueError('invalid idea id: ' + idea_id)
     text = Path(report).read_text()
     if not complete(text) or not re.search(r'^READ ' + re.escape(idea_id) + r':[ \t]*\S[^\n]+$', text, re.M):
         raise ValueError('read evidence requires READ {}: <judgment> and final DONE'.format(idea_id))
@@ -208,10 +218,10 @@ def valid_read(row):
         return False
 
 
-def obligations(lane, cfg, rh, clock=None):
+def obligations(lane, cfg, rh, clock=None, history=None):
     """Current rows, but the original creation/promotion clocks from all history."""
     clock = clock or stamp(rh.now())
-    history = rh.rows(lane / 'IDEAS.jsonl')
+    history = rh.rows(lane / 'IDEAS.jsonl') if history is None else history
     start = stamp(cfg['start_date'])
     first, promoted = {}, {}
     for r in history:
@@ -248,6 +258,19 @@ def obligations(lane, cfg, rh, clock=None):
             if clock - since > dt.timedelta(days=cfg['testing_max_age_days']) and not has_result:
                 errors.append('idea {} testing without a result after {} days'.format(key, cfg['testing_max_age_days']))
     return due, errors, legacy
+
+
+def stage_snapshot(lane, cfg, rh):
+    """Freeze obligations from one queue read at the start of each stage."""
+    history = rh.rows(lane / 'IDEAS.jsonl')
+    clock = stamp(rh.now())
+    due, _, legacy = obligations(lane, cfg, rh, clock=clock, history=history)
+    queue = rh.latest(history)
+    cutoff = clock - dt.timedelta(days=3)
+    for row in queue.values():
+        if stamp(row.get('created') or row.get('date') or row.get('ts')) >= cutoff and row['id'] not in due:
+            due.append(row['id'])
+    return due, queue, legacy
 
 
 def receipt_health(lane, rh):
@@ -297,7 +320,7 @@ def lint(lane, rh):
                     good = all(p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest() == run['report_sha256'][k]
                                for k, p in paths.items()) and set(paths) == {'search', 'read', 'kill'}
                     if good and run.get('evidence_policy'):
-                        ids = re.findall(r'^IDEA ([A-Z0-9]+-\d+):', paths['search'].read_text(), re.M)
+                        ids = re.findall(r'^IDEA (' + ID_PATTERN + r'):', paths['search'].read_text(), re.M)
                         receipts = run.get('prior_art_receipts', {})
                         good = isinstance(receipts, dict) and set(receipts) == set(ids)
                         if good:
@@ -316,6 +339,10 @@ def lint(lane, rh):
 
 
 def generate(stage, lane, cfg, paths, day, due, failures=()):
+    x_outcomes_policy = (
+        ' Dated X search outcomes also arrive through intake in X_SEARCHES.jsonl; '
+        'applicable negative receipts establish coverage for their recorded date and scope.'
+        if cfg.get('x_capture_path') else '')
     intro = [
         '# Harness outside search: {} / {} / {}'.format(lane.name, stage, day),
         'Working directory: ' + str(cfg['cwd']),
@@ -324,7 +351,9 @@ def generate(stage, lane, cfg, paths, day, due, failures=()):
             cfg['cores'], cfg['memory_gib'], cfg['min_free_gib']),
         'Each kill test has at most {} minutes; GPU or larger jobs are BLOCKED.'.format(cfg['kill_test_max_minutes']),
         'No submissions, posting, paid APIs, pods, secrets, or sealed-data/board scoring.',
-        'X POLICY (overrides all legacy source-spec X instructions): X results arrive ONLY through intake in IDEAS.jsonl. Workers have no other route to X. Do not search, browse, fetch or follow X/Twitter links, use any X API, or use web search, mirrors or proxies to reach X. Only the general session performs the browser step and supplies captured metadata through intake. Judge X intake metadata without opening its X source URL.',
+        'X POLICY (overrides all legacy source-spec X instructions): X results arrive ONLY through intake in IDEAS.jsonl.'
+        + x_outcomes_policy
+        + ' Workers have no other route to X. Do not search, browse, fetch or follow X/Twitter links, use any X API, or use web search, mirrors or proxies to reach X. Only the general session performs the browser step and supplies captured metadata through intake. Judge X intake metadata without opening its X source URL.',
         'Do not edit harness code, lane configs or queue files. Write only configured artifacts; the harness records explicit read receipts.',
         'Embedded source specs provide binding policy and formats. Execute only the current stage objective; other stages handle their own duties. Search/kill report line limits do not limit the READ report.',
         'Resolved operational paths below replace legacy report/queue paths in the source specs; all binding scientific and safety rules still apply.',
@@ -340,19 +369,35 @@ def generate(stage, lane, cfg, paths, day, due, failures=()):
                      + '\nRead public methods and source, not predictions or scores. These are bounded first pages; report coverage/rate-limit failures honestly, use further read-only pages only when needed, and inspect prior seen repositories for recent changes. Code-search matches are leads: read the file to verify an actual library import and deduplicate by repository. Do not execute discovered code without the lane screens.')
     intro.append('X browser handoff for general only: ' + str(lane / 'X_QUERIES.txt')
                  + '\n' + x_query_text(lane, cfg))
+    if stage == 'search' and cfg.get('x_capture_path'):
+        journal = lane / 'X_SEARCHES.jsonl'
+        entries = x_searches.recent(journal)
+        intro.append('General-session X search outcomes from the last 14 days: ' + str(journal)
+                     + '\n' + '\n'.join(json.dumps(row, ensure_ascii=False) for row in entries)
+                     + '\nThese are dated search receipts, not posts or permission to search X. '
+                     'For a relevant result=none row, cite "X searched on <utc date>, none on topic" '
+                     'with its exact query and optional subject. Only claim the recorded scope; '
+                     'missing, stale or unrelated rows do not establish coverage. '
+                     'For result=hits use captured post metadata from intake; the hit count alone is not source evidence.')
     if stage == 'search' and cfg.get('evidence_policy'):
+        negative_receipt = (
+            'For a relevant dated result=none in X_SEARCHES.jsonl, instead copy that journal to the run directory '
+            'and bind its capture_path/capture_sha256; set X status=none, hits=[], query and searched_at '
+            'to the recorded query and utc, and cite its date/subject in note. '
+            if cfg.get('x_capture_path') else '')
         intro.append('For every IDEA <ID>, write ' + str(paths['search'].parent / 'prior-art-<ID>.json')
                      + ' as schema=1 JSON with baseline (best public method and number), sources {github, x, papers, leaderboards}. '
                      'Each source needs status hits|none, query, searched_at (UTC ISO), hits (URL list), note. '
                      'X additionally needs capture_path and capture_sha256 for the existing general-session intake capture. '
                      'First copy the general-session capture bytes to this run directory under allowed_writes and reference that stable copy. '
-                     'Use ONLY that captured metadata; a missing/stale/inapplicable capture is blocked, never invent a search. '
+                     + negative_receipt
+                     + 'Use ONLY that captured metadata or the supplied dated outcomes; a missing/stale/inapplicable capture is blocked, never invent a search. '
                      'Record blocked sources honestly: incomplete coverage fails the compiler and stays queued for another pass. '
                      'For competition leaderboards use only lane-permitted public methods/rules; never prohibited predictions or scores. '
                      'The receipt is machine-checked with idea_policy.prior_art; a source name without a query/outcome is insufficient.')
     if stage == 'search':
         intro += ['Search outside sources for new methods, competitors, runnable public code, recent papers and community discussions. Read prior seen material first; append what you searched to the configured seen file if provided.',
-                  'Follow the lane search spec verbatim, using the resolved report path. Use IDEA <BOARD>-<n>: lines with URL, added signal, metric, first kill test and rules risk. With no new ideas, document the actual search and NOTHING NEW. End DONE or BLOCKED.']
+                  'Follow the lane search spec verbatim, using the resolved report path. Use IDEA <id>: lines with URL, added signal, metric, first kill test and rules risk. IDs may be BOARD-n or UUID (32 hexadecimal digits or standard hyphenated UUID); preserve queue IDs exactly. With no new ideas, document the actual search and NOTHING NEW. End DONE or BLOCKED.']
     elif stage == 'read':
         intro += ['Read and judge every listed queue id, follow its source within the lane rules except X/Twitter URLs (intake metadata only); also inspect newest intake rows from the last 3 days. A judged lead may be rejected; give the reason.',
                   'Required queue ids (all unmarked rows since stage start): ' + json.dumps(due),
@@ -360,7 +405,7 @@ def generate(stage, lane, cfg, paths, day, due, failures=()):
                   'If configured, also append every judged id, one per line, to seen_ideas. This compatibility file alone does not satisfy harness lint.']
     else:
         intro += ['Read the search report and run the first kill test for EVERY IDEA, in order. Fix the numerical pass line in writing before each run under allowed_writes. Apply every lane screen before using any data.',
-                  'Write RESULT <idea-id>: KILLED|SURVIVED|BLOCKED then the number and pass line (or the concrete blocking need). With no ideas write RESULT NONE. End DONE or BLOCKED.']
+                  'Write RESULT <idea-id>: KILLED|SURVIVED|BLOCKED then the number and pass line (or the concrete blocking need). Preserve BOARD-n or UUID ids exactly. Results for existing queue ids are also accepted; never invent an id. With no results write RESULT NONE. End DONE or BLOCKED.']
     if cfg.get('boards'):
         intro.append('Boards: ' + ', '.join(cfg['boards']) + '; at most 2 ideas each; account for every board with ideas or NOTHING NEW for that board.')
     if cfg.get('search_max_lines'):
@@ -388,26 +433,29 @@ def check(paths, due, cfg=None, known_ids=None):
         elif re.search(r'(?:^|\n)BLOCKED\s*$', texts[stage]):
             errors.append(stage + ' report BLOCKED')
     s, k, r = (texts.get(x, '') for x in ('search', 'kill', 'read'))
-    ids = re.findall(r'^IDEA ([A-Z0-9]+-\d+):[ \t]*\S[^\n]+$', s, re.M)
-    malformed = [line for line in s.splitlines() if line.startswith('IDEA ') and not re.fullmatch(r'IDEA [A-Z0-9]+-\d+:[ \t]*\S[^\n]+', line)]
+    ids = re.findall(r'^IDEA (' + ID_PATTERN + r'):[ \t]*\S[^\n]+$', s, re.M)
+    malformed = [line for line in s.splitlines() if line.startswith('IDEA ') and not re.fullmatch(r'IDEA ' + ID_PATTERN + r':[ \t]*\S[^\n]+', line)]
     if malformed or len(ids) != len(set(ids)):
         errors.append('malformed or duplicate IDEA lines')
-    results = re.findall(r'^RESULT ([A-Z0-9]+-\d+): (KILLED|SURVIVED|BLOCKED)(?:[ \t]+([^\n]+))?$', k, re.M)
+    results = re.findall(r'^RESULT (' + ID_PATTERN + r'): (KILLED|SURVIVED|BLOCKED)(?:[ \t]+([^\n]+))?$', k, re.M)
     got = {v[0] for v in results}
     if set(ids) - got:
         errors.append('ideas without a result: ' + ','.join(sorted(set(ids) - got)))
-    if got - set(ids) or len(results) != len(got):
+    if got - (set(ids) | set(known_ids or ())) or len(results) != len(got):
         errors.append('unexpected or duplicate RESULT lines')
-    malformed_results = [line for line in k.splitlines() if line.startswith('RESULT ') and line != 'RESULT NONE' and not re.fullmatch(r'RESULT [A-Z0-9]+-\d+: (KILLED|SURVIVED|BLOCKED)(?:[ \t]+[^\n]+)?', line)]
+    malformed_results = [line for line in k.splitlines() if line.startswith('RESULT ') and line != 'RESULT NONE' and not re.fullmatch(r'RESULT ' + ID_PATTERN + r': (KILLED|SURVIVED|BLOCKED)(?:[ \t]+[^\n]+)?', line)]
     if malformed_results:
         errors.append('malformed RESULT lines')
     if any(not detail.strip() for _, _, detail in results):
         errors.append('result missing number/pass line or blocking need')
-    if not ids and 'RESULT NONE' not in k.splitlines():
+    if not ids and not results and 'RESULT NONE' not in k.splitlines():
         errors.append('kill report empty')
     if not ids and 'NOTHING NEW' not in s:
         errors.append('search report has neither IDEA nor NOTHING NEW')
-    read_ids = set(re.findall(r'^READ (\S+):[ \t]*\S[^\n]+$', r, re.M))
+    read_pattern = r'READ (' + ID_PATTERN + r'):[ \t]*\S[^\n]+'
+    read_ids = set(re.findall('^' + read_pattern + '$', r, re.M))
+    if any(line.startswith('READ ') and not re.fullmatch(read_pattern, line) for line in r.splitlines()):
+        errors.append('malformed READ lines')
     if known_ids is not None and read_ids - set(known_ids):
         errors.append('read judgments for unknown queue ids: ' + ','.join(sorted(read_ids - set(known_ids))))
     if set(due) - read_ids:
@@ -421,7 +469,8 @@ def check(paths, due, cfg=None, known_ids=None):
             errors.append('more than 2 ideas for ' + board)
         if not count and not any(board in line and 'NOTHING NEW' in line for line in s.splitlines()):
             errors.append('board unaccounted for: ' + board)
-    if cfg.get('boards') and any(key.rsplit('-', 1)[0] not in cfg['boards'] for key in ids):
+    if cfg.get('boards') and any(re.fullmatch(r'[A-Z0-9]+-[0-9]+', key)
+                                 and key.rsplit('-', 1)[0] not in cfg['boards'] for key in ids):
         errors.append('unknown idea board')
     if cfg.get('evidence_policy'):
         for key in ids:
@@ -581,12 +630,7 @@ def notify(lane, errors):
 def run_lane(lane, cfg, rh, dry=False):
     day = dt.date.today().isoformat()
     paths = reports(cfg, day)
-    due, _, legacy = obligations(lane, cfg, rh)
-    cutoff = dt.datetime.now(UTC) - dt.timedelta(days=3)
-    queue = rh.latest(rh.rows(lane / 'IDEAS.jsonl'))
-    for row in queue.values():
-        if stamp(row.get('created') or row.get('date') or row.get('ts')) >= cutoff and row['id'] not in due:
-            due.append(row['id'])
+    due, queue, legacy = stage_snapshot(lane, cfg, rh)
     print('{}: {} rows to read; grandfathered: {}'.format(lane.name, len(due), ','.join(legacy) or 'none'))
     if dry:
         print('Worker configuration: workers_enabled={}{}'.format(
@@ -614,14 +658,20 @@ def run_lane(lane, cfg, rh, dry=False):
         for pass_number in range(2):
             worker_errors = []
             for stage in ('search', 'read', 'kill'):
+                stage_due, queue, _ = stage_snapshot(lane, cfg, rh)
+                if stage == 'read':
+                    due = stage_due
                 spec = attempt / ('{}-{}.md'.format(pass_number, stage))
-                spec.write_text(generate(stage, lane, cfg, scratch, day, due, errors))
+                spec.write_text(generate(stage, lane, cfg, scratch, day, stage_due, errors))
                 try:
                     rc = run_worker(spec, cfg)
                     if rc:
                         worker_errors.append('{} worker exit {}'.format(stage, rc))
                 except (OSError, ValueError) as e:
                     worker_errors.append(stage + ': ' + str(e))
+            # Freeze required reads at READ admission, but recognize genuine rows
+            # arriving during any worker. Unjudged late arrivals wait for next run.
+            queue = rh.latest(rh.rows(lane / 'IDEAS.jsonl'))
             errors = worker_errors + check(scratch, due, cfg, queue)
             if not errors:
                 break
@@ -630,7 +680,7 @@ def run_lane(lane, cfg, rh, dry=False):
             for stage, dest in paths.items():
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_text(scratch[stage].read_text())
-            judged = re.findall(r'^READ (\S+):[ \t]*\S[^\n]+$', scratch['read'].read_text(), re.M)
+            judged = re.findall(r'^READ (' + ID_PATTERN + r'):[ \t]*\S[^\n]+$', scratch['read'].read_text(), re.M)
             for key in dict.fromkeys(judged):
                 mark_read(lane, key, scratch['read'], rh)
     except (OSError, ValueError, KeyError) as e:
@@ -640,7 +690,7 @@ def run_lane(lane, cfg, rh, dry=False):
         print('{}: re-queued unsettled ideas {}'.format(lane.name, ','.join(carried)))
     prior_receipts = {}
     if cfg.get('evidence_policy'):
-        for idea_id in re.findall(r'^IDEA ([A-Z0-9]+-\d+):', scratch['search'].read_text() if scratch['search'].is_file() else '', re.M):
+        for idea_id in re.findall(r'^IDEA (' + ID_PATTERN + r'):', scratch['search'].read_text() if scratch['search'].is_file() else '', re.M):
             try:
                 prior_receipts[idea_id] = idea_policy.prior_art(attempt / ('prior-art-' + idea_id + '.json'))
             except (OSError, ValueError, TypeError):
@@ -672,10 +722,10 @@ def carry_over(lane, scratch, rh, started, preserve_all=False):
         k = scratch['kill'].read_text() if scratch['kill'].is_file() else ''
     except OSError:
         return []
-    settled = {i for i, verdict in re.findall(r'^RESULT ([A-Z0-9]+-\d+): (KILLED|SURVIVED)', k, re.M)}
+    settled = {i for i, verdict in re.findall(r'^RESULT (' + ID_PATTERN + r'): (KILLED|SURVIVED)', k, re.M)}
     have = {(r.get('sweep_idea_id'), r.get('title_hash')) for r in rh.rows(lane / 'IDEAS.jsonl')}
     added = []
-    for idea_id, text in re.findall(r'^IDEA ([A-Z0-9]+-\d+):[ \t]*(\S[^\n]+)$', s, re.M):
+    for idea_id, text in re.findall(r'^IDEA (' + ID_PATTERN + r'):[ \t]*(\S[^\n]+)$', s, re.M):
         if idea_id in settled and not preserve_all:
             continue
         digest = rh.title_hash(text)

@@ -15,6 +15,7 @@ Use independent sealed selection; this repo ships code and synthetic examples.
 - Before previewing, load [.claude/skills/run-sweep/SKILL.md](.claude/skills/run-sweep/SKILL.md) (or invoke the `run-sweep` skill). Preview: `scripts/run-sweep.sh --root .runtime NAME`. It prints search/read/kill plans with no workers or network.
 - For a real sweep, configure actual data/sources, compatible model routes and worker limits; review the preview, then set `workers_enabled = true` in the lane's `SWEEP.toml`. Run `AGENT_BACKEND=codex scripts/run-sweep.sh --root .runtime NAME --execute` (or `claude`). This may spend money. Dry-run requests authorize only a preview.
 - Config lives at `ROOT/lanes/NAME/{INTAKE,SWEEP,CADENCE,OUTREACH}.toml`; new lanes also have frozen declarations and `RULES.md`. Runtime default: `.runtime/`. See [configuration](docs/configuration.md) for executor auth, routes and explicit paths. Provider CLIs require their own account; never copy credential files into a clone.
+- Record actual browser outcomes: `rh intake x-search LANE --query Q [--subject S] --result none|hits --n N` (requires `x_local_file`; records locally without searching).
 - Use `AGENT_BACKEND=codex|claude`; there is no model/backend substitution. The offline demo requires neither CLI nor login.
 
 ## Hard rules

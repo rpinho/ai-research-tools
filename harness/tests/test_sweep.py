@@ -415,12 +415,12 @@ class SweepTests(unittest.TestCase):
         paths['search'].write_text('IDEA B-1: https://example.org signal; metric; kill; risk\nDONE\n')
         paths['read'].write_text('DONE\n')
         paths['kill'].write_text('RESULT NONE\nDONE\n')
-        errors = sweep.check(paths, ['required'])
+        errors = sweep.check(paths, ['B-2'])
         self.assertIn('ideas without a result: B-1', errors)
-        self.assertIn('queue ids without a read judgment: required', errors)
-        paths['read'].write_text('READ required: judged rejected\nDONE\n')
+        self.assertIn('queue ids without a read judgment: B-2', errors)
+        paths['read'].write_text('READ B-2: judged rejected\nDONE\n')
         paths['kill'].write_text('RESULT B-1: SURVIVED value=2; pass line > 1\nDONE\n')
-        self.assertEqual(sweep.check(paths, ['required']), [])
+        self.assertEqual(sweep.check(paths, ['B-2']), [])
 
     def test_compiler_rejects_blocked_unfinished_and_malformed_reports(self):
         p = self.paths()
@@ -437,6 +437,99 @@ class SweepTests(unittest.TestCase):
         p['read'].write_text('No unread rows\nDONE\n')
         p['kill'].write_text('RESULT NONE\nDONE\n')
         self.assertEqual(sweep.check(p, []), [])
+
+    def test_board_and_uuid_ids_share_search_read_kill_contract(self):
+        for key in ('B-1', '00acbfca05cb4c858783504af83fc5d2',
+                    '00acbfca-05cb-4c85-8783-504af83fc5d2'):
+            with self.subTest(key=key):
+                p = self.paths()
+                p['search'].write_text('IDEA {}: https://example.org method; metric; kill; risk\nDONE\n'.format(key))
+                p['read'].write_text('READ {}: judged source and exclusions\nDONE\n'.format(key))
+                p['kill'].write_text('RESULT {}: KILLED value=0; pass > 1\nDONE\n'.format(key))
+                self.assertEqual(sweep.check(p, [key], known_ids=[key]), [])
+                self.assertTrue(sweep.read_evidence(p['read'], key))
+                self.assertEqual(sweep.carry_over(self.lane, p, rh, rh.now()), [])
+                p['kill'].write_text('RESULT {}: BLOCKED needs fixture\nDONE\n'.format(key))
+                self.assertEqual(sweep.carry_over(self.lane, p, rh, rh.now()), [key])
+
+    def test_queue_kill_results_are_valid_but_unknown_ids_still_fail(self):
+        key = self.add(days=0)['id']
+        p = self.paths()
+        p['search'].write_text('Searched actual sources; NOTHING NEW\nDONE\n')
+        p['read'].write_text('READ {}: judged metadata and exclusions\nDONE\n'.format(key))
+        p['kill'].write_text('RESULT {}: BLOCKED needs public fixture\nDONE\n'.format(key))
+        self.assertEqual(sweep.check(p, [key], known_ids=[key]), [])
+        errors = sweep.check(p, [], known_ids=[])
+        self.assertIn('unexpected or duplicate RESULT lines', errors)
+        self.assertTrue(any('unknown queue ids' in e for e in errors))
+        # Existing queue results cannot stand in for a newly proposed search idea.
+        p['search'].write_text('IDEA B-1: https://example.org new method\nDONE\n')
+        self.assertIn('ideas without a result: B-1', sweep.check(p, [], known_ids=[key]))
+
+    def test_malformed_ids_fail_in_all_report_parsers(self):
+        for key in ('not-an-id', 'a' * 31, 'g' * 32, 'B-1suffix'):
+            with self.subTest(key=key):
+                p = self.paths()
+                p['search'].write_text('IDEA {}: https://example.org method\nDONE\n'.format(key))
+                p['read'].write_text('READ {}: judged metadata\nDONE\n'.format(key))
+                p['kill'].write_text('RESULT {}: KILLED value=0; pass > 1\nDONE\n'.format(key))
+                errors = sweep.check(p, [])
+                self.assertIn('malformed or duplicate IDEA lines', errors)
+                self.assertIn('malformed READ lines', errors)
+                self.assertIn('malformed RESULT lines', errors)
+                with self.assertRaisesRegex(ValueError, 'invalid idea id'):
+                    sweep.read_evidence(p['read'], key)
+
+    def test_mid_run_intake_is_refreshed_and_late_unread_rows_can_wait(self):
+        for arrival_stage, judged in (('search', True), ('read', True),
+                                      ('read', False), ('kill', False)):
+            with self.subTest(arrival_stage=arrival_stage, judged=judged):
+                arrived, calls = [], []
+                def worker(spec, cfg):
+                    stage = spec.stem.split('-', 1)[1]
+                    calls.append(stage)
+                    if stage == 'read' and arrival_stage == 'search':
+                        required = next(line for line in spec.read_text().splitlines()
+                                        if line.startswith('Required queue ids'))
+                        self.assertIn(arrived[0]['id'], required)
+                    if stage == arrival_stage and judged and stage == 'read':
+                        arrived.append(self.add(days=0))
+                    rc = self.fake_worker(spec, cfg)
+                    if stage == arrival_stage and not arrived:
+                        arrived.append(self.add(days=0))
+                    return rc
+                self.worker.side_effect = worker
+                with patch.object(sweep, 'guard'):
+                    rc, out, err = self.cli('sweep', 'test')
+                self.assertEqual(rc, 0, out + err)
+                self.assertEqual(calls, ['search', 'read', 'kill'])
+                current = rh.latest(rh.rows(self.lane / 'IDEAS.jsonl'))[arrived[0]['id']]
+                self.assertEqual(sweep.valid_read(current), judged)
+                self.notifier.assert_not_called()
+
+    def test_uuid_search_receipts_are_recorded_and_checked_by_lint(self):
+        key = '00acbfca05cb4c858783504af83fc5d2'
+        def worker(spec, cfg):
+            rc = self.fake_worker(spec, cfg)
+            stage = spec.stem.split('-', 1)[1]
+            report = spec.parent / (stage + '.report.md')
+            report.write_text(report.read_text().replace('TEST-1', key))
+            if stage == 'search':
+                prior_fixture(spec.parent / ('prior-art-' + key + '.json'))
+            return rc
+        self.worker.side_effect = worker
+        with patch.object(sweep, 'guard'):
+            rc, out, err = self.cli('sweep', 'test')
+        self.assertEqual(rc, 0, out + err)
+        run = rh.rows(self.lane / 'SWEEP_RUNS.jsonl')[-1]
+        self.assertEqual(set(run['prior_art_receipts']), {key})
+        self.assertNotIn('no successful sweep report in 26 hours', sweep.lint(self.lane, rh)[0])
+        # Removing the UUID receipt must invalidate success just as for BOARD-n.
+        run['prior_art_receipts'] = {}
+        rh.append(self.lane / 'SWEEP_RUNS.jsonl', run)
+        # The sweep linter scans successful records rather than reducing by id.
+        (self.lane / 'SWEEP_RUNS.jsonl').write_text(json.dumps(run) + '\n')
+        self.assertIn('no successful sweep report in 26 hours', sweep.lint(self.lane, rh)[0])
 
     def test_ve_board_and_line_bounds_are_lane_owned(self):
         p = self.paths()
@@ -630,7 +723,7 @@ class SweepTests(unittest.TestCase):
     def test_compiler_rejects_unknown_read_ids_and_duplicate_results(self):
         p = self.paths()
         p['search'].write_text('IDEA B-1: https://example.org signal; metric; kill; risk\nDONE\n')
-        p['read'].write_text('READ invented: never in queue\nDONE\n')
+        p['read'].write_text('READ INVENTED-1: never in queue\nDONE\n')
         p['kill'].write_text('RESULT B-1: KILLED value=0; bar > 1\nRESULT B-1: SURVIVED value=2; bar > 1\nDONE\n')
         errors = ' '.join(sweep.check(p, [], known_ids=[]))
         self.assertIn('unknown queue ids', errors)
