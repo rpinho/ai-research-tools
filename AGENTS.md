@@ -18,6 +18,8 @@ Use independent sealed selection; this repo ships code and synthetic examples.
 - Record actual browser outcomes: `rh intake x-search LANE --query Q [--subject S] --result none|hits --n N` (requires `x_local_file`; records locally without searching).
 - Use `AGENT_BACKEND=codex|claude`; there is no model/backend substitution. The offline demo requires neither CLI nor login.
 
+- For retros and cross-lane learning, use [run-retro](.claude/skills/run-retro/SKILL.md) and [lessons](docs/lessons.md).
+
 ## Hard rules
 
 | Never break this rule | Code enforcing the instrumented boundary |

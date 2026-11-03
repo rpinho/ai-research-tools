@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 import uuid
+import lessons
 import threading
 from concurrent.futures import ThreadPoolExecutor
 import idea_policy
@@ -173,6 +174,7 @@ def load(lane, rh):
         raise ValueError('INTAKE x_local_file must be a single-line path string')
     cfg['x_capture_path'] = path_at(capture, lane) if capture else None
     cfg['rules'].append((str(intake), intake.read_text()))
+    cfg['_lesson_rows'] = lessons.for_lane(lane, rh, n=12)
     cfg['launcher_path'] = path_at(cfg['launcher'], lane)
     cfg['run_path'] = path_at(cfg['run_directory'], cfg['cwd'])
     if not cfg['run_path'].is_relative_to(cfg['cwd']):
@@ -359,6 +361,9 @@ def generate(stage, lane, cfg, paths, day, due, failures=()):
         'Resolved operational paths below replace legacy report/queue paths in the source specs; all binding scientific and safety rules still apply.',
         'IDEAS queue: ' + str(lane / 'IDEAS.jsonl'),
     ]
+    intro += ['## Shared lessons', 'rh lessons for {} -n 12'.format(lane.name),
+              lessons.render(cfg.get('_lesson_rows', [])).rstrip() or '(no lessons yet)',
+              'Promoted lessons name the enforcing code in promoted_to; follow that code.']
     intro += ['{} report: {}'.format(k, v) for k, v in paths.items()]
     for key in ('search_targets', 'sources', 'banned_sources', 'allowed_tests', 'allowed_writes'):
         intro.append(key + ':\n' + '\n'.join('- ' + v for v in cfg[key]))
@@ -628,6 +633,9 @@ def notify(lane, errors):
 
 
 def run_lane(lane, cfg, rh, dry=False):
+    # One immutable snapshot goes into every stage/repair and its receipt.
+    cfg['_lesson_rows'] = lessons.for_lane(lane, rh, n=12)
+    cfg['_lesson_ids_shown'] = []
     day = dt.date.today().isoformat()
     paths = reports(cfg, day)
     due, queue, legacy = stage_snapshot(lane, cfg, rh)
@@ -663,6 +671,7 @@ def run_lane(lane, cfg, rh, dry=False):
                     due = stage_due
                 spec = attempt / ('{}-{}.md'.format(pass_number, stage))
                 spec.write_text(generate(stage, lane, cfg, scratch, day, stage_due, errors))
+                cfg['_lesson_ids_shown'] = [row['id'] for row in cfg['_lesson_rows']]
                 try:
                     rc = run_worker(spec, cfg)
                     if rc:
@@ -699,6 +708,8 @@ def run_lane(lane, cfg, rh, dry=False):
                started=cfg.get('_started', started), finished=rh.now(), ok=not errors,
                worker_timeout_minutes=cfg['worker_timeout_minutes'],
                evidence_policy=cfg.get('evidence_policy', False), prior_art_receipts=prior_receipts,
+               lesson_ids=cfg['_lesson_ids_shown'], lessons_sha256=lessons.snapshot(cfg['_lesson_rows']),
+               lessons_command='rh lessons for {} -n 12'.format(lane.name),
                reports={k: str(v) for k, v in scratch.items()}, errors=errors, carried=carried,
                rules_sha256={name: hashlib.sha256(text.encode()).hexdigest() for name, text in cfg['rules']},
                report_sha256={k: hashlib.sha256(v.read_bytes()).hexdigest() for k, v in scratch.items() if v.is_file()})
@@ -778,7 +789,9 @@ def run_locked(lane, config, rh, cancel):
             if not cfg.get('_receipt_finished'):
                 with rh.locked(lane):
                     rh.append(lane / 'SWEEP_RUNS.jsonl', dict(start, status='finished', finished=rh.now(),
-                                                            ok=not result, errors=errors))
+                                                            ok=not result, errors=errors,
+                                                            lesson_ids=cfg.get('_lesson_ids_shown', []),
+                                                            lessons_sha256=lessons.snapshot(cfg.get('_lesson_rows', []))))
 
 
 def main(root, args, rh):

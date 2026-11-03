@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import selection_policy
+import lessons
 
 REPO = Path(__file__).resolve().parents[1]
 UTC = dt.timezone.utc
@@ -79,6 +80,7 @@ biorxiv_pages = 0
 community_urls = []
 github_pr_repos = []
 minimum_attempts = 2
+lessons_required = false
 claude_science_required = false
 selection_min_measurements = 10
 selection_sealed_budget = %d
@@ -115,6 +117,7 @@ Keep workers bounded by SWEEP.toml. Send deletions to Trash.
         raise ValueError('; '.join(problems))
     print('Created {}: frozen v2 declarations; workers disabled; no results or external reads claimed'.format(lane))
     print('Frozen declarations are immutable; changed assumptions require a new lane.')
+    lessons.record_read(lane, rh)
     print('Next: rh --root {} lint {}'.format(root, args.name))
     return 0
 

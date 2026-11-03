@@ -25,6 +25,8 @@ import urllib.error
 import time
 import email.utils
 import sweep
+import lessons
+import retro
 import x_searches
 import outreach
 import cadence
@@ -240,6 +242,11 @@ def config_value(value):
 
 
 def validate_config(cfg):
+    if type(cfg.get('lessons_required', False)) is not bool:
+        raise ValueError('lessons_required must be true or false')
+    for field in ('lesson_tags', 'tags'):
+        if field in cfg and (not isinstance(cfg[field], list) or any(not isinstance(v, str) for v in cfg[field])):
+            raise ValueError(field + ' must be an array of strings')
     if not isinstance(cfg.get("verification_required", False), bool):
         raise ValueError("verification_required must be true or false")
     # board-deciding questions through a Claude Science session; lint and promote enforce it.
@@ -689,7 +696,7 @@ def lint_result(lane, report=None):
     errors.add_many('outreach', outreach_errors)
     return dict(lane=lane.name, status='FAIL' if errors else 'OK', depth=n, setup=setup,
                 failure_count=len(errors), failures=errors.failures,
-                warnings=policy_warnings, grandfathered=grandfathered,
+                warnings=policy_warnings + lessons.warnings(lane, sys.modules[__name__]), grandfathered=grandfathered,
                 outreach=dict(status='FAIL' if outreach_errors else 'OK', count=len(outreach.current(lane, sys.modules[__name__]))))
 
 
@@ -783,6 +790,8 @@ def parser():
     p.add_argument('--root', type=Path, default=settings.path('RH_ROOT', ROOT), help='isolated harness root (default: installed root)')
     sub = p.add_subparsers(dest='command', required=True)
     lane_setup.arguments(sub)
+    lessons.arguments(sub)
+    retro.arguments(sub)
     pods.arguments(sub)
     cadence.arguments(sub)
     outreach.arguments(sub)
@@ -806,7 +815,7 @@ def parser():
         else:
             a.add_argument('--evidence', type=Path, required=True)
             a.add_argument('--output', type=Path, required=True)
-    ideas = sub.add_parser('ideas').add_subparsers(dest='action', required=True)
+    ideas = sub.add_parser('ideas', aliases=['idea']).add_subparsers(dest='action', required=True)
     a = ideas.add_parser('show', help='show one idea by unique ID/prefix across lanes (JSON)')
     a.add_argument('id')
     for action in ('add', 'list', 'close', 'promote', 'depth', 'read', 'result', 'freeze', 'reopen'):
@@ -839,6 +848,10 @@ def parser():
             a.add_argument('--verification-evidence', type=Path, help='verification metadata JSON; evidence paths relative to the lane')
             a.add_argument('--config-path', type=Path, help='nonempty JSON configuration used for this attempt')
         if action == 'close':
+            lesson = a.add_mutually_exclusive_group()
+            lesson.add_argument('--lesson', help='one evidence-backed claim, at most two sentences')
+            lesson.add_argument('--no-lesson', metavar='REASON', help='why this close has no transferable lesson')
+            a.add_argument('--lesson-tags', nargs='+', default=[])
             a.add_argument('--attempts', type=int, help='number of recorded attempts; needs >= lane minimum distinct configs')
             a.add_argument('--no-test-reason', default='', help='explicit reason for a close without a test (e.g. source/rule exclusion)')
             a.add_argument('--result-path', default='')
@@ -898,7 +911,13 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    if args.command == 'idea':
+        args.command = 'ideas'
     try:
+        if args.command == 'lessons':
+            return lessons.main(args.root, args, sys.modules[__name__])
+        if args.command == 'retro':
+            return retro.main(args.root, args, sys.modules[__name__])
         if args.command == 'intake':
             if args.lane == 'x-search':
                 if not args.x_search_lane or args.query is None or args.result is None or args.n is None:
@@ -1077,6 +1096,7 @@ def main(argv=None):
                         row['testing_started'] = now()
                     row.update(status='testing', runnable=row['board'] != 'none')
                 else:
+                    lessons.close_options(args, lane_config(lane).get('lessons_required', False))
                     if row['status'] not in ('new', 'testing'):
                         raise ValueError('close requires status=new or testing')
                     result = Path(args.result_path).expanduser().resolve() if args.result_path else None
@@ -1107,6 +1127,8 @@ def main(argv=None):
                     row.update(status='closed', result_path=str(result) if result else row.get('result_path', ''), closed_reason=args.closed_reason.strip() or (args.no_test_reason.strip() if idea_policy.enabled(lane) or row.get('policy_version') == 2 else ''),
                                decided_by=who, mechanical=bool(args.mechanical),
                                close_kind=args.close_kind or ('bar-failed' if args.mechanical else ''))
+                if args.action == 'close':
+                    lessons.close_record(lane, row, args, sys.modules[__name__])
                 row.update(revised=now(), event=args.action)
                 append(lane / 'IDEAS.jsonl', row)
                 print(row['id'] + ' ' + row['status'])

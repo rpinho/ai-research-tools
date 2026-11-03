@@ -100,3 +100,8 @@ Optional hooks must be installed in the tool environment that performs the actio
 The separation of adaptive work from final evaluation is informed by [Dwork and coauthors on holdout reuse](https://arxiv.org/abs/1506.02629) and [Blum and Hardt on reliable competition leaderboards](https://arxiv.org/abs/1502.04585). The search/evaluate/retain pattern has related work in [AlphaEvolve](https://arxiv.org/abs/2506.13131). This code implements local workflow checks, not those papers' algorithms or guarantees. [Sources and attribution](docs/credits.md) describe the relationship.
 
 [MIT license](LICENSE).
+
+## Shared lessons and field retros
+
+See [sharing lessons](docs/lessons.md) for `rh lessons`, automatic sweep/new-lane
+reads, opt-in close requirements, and the local-only `rh retro` workflow.
