@@ -130,8 +130,8 @@ def remote_read(pod, timeout=60):
     All waiting is local; the two cpu.stat reads are five seconds apart. Never
     read /proc/1/environ or expose raw SSH output (including login banners).
     """
-    key = settings.path('RH_SSH_KEY', Path.home() / '.ssh/id_ed25519')
-    hosts = settings.path('RH_KNOWN_HOSTS', Path.home() / '.ssh/known_hosts')
+    key = settings.path('RH_SSH_KEY', Path('.runtime/ssh/id_ed25519'))
+    hosts = settings.path('RH_KNOWN_HOSTS', Path('.runtime/ssh/known_hosts'))
     argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
@@ -845,9 +845,7 @@ def reap_ready(history, pod, now, idle_only=False):
 
 
 def reap_mode(root, now, dry_run=False):
-    installed = Path(root).resolve() == Path(__file__).resolve().parent
-    config_path = (Path.home() / '.config/research-harness/pod-gate.json'
-                   if installed else root / 'pod-gate.json')
+    config_path = settings.path('RH_POD_GATE_CONFIG', root / 'pod-gate.json')
     rollout = root / 'POD_REAP_ROLLOUT.json'
     if not rollout.exists():
         atomic_json(rollout, dict(started_utc=now))
@@ -1366,8 +1364,8 @@ def dispatch(root, pod, destination, mode='dispatch', expected_generation=None):
     """controller opens existing strict proxy SSH, then bridges a preinstalled runner socket."""
     if mode not in ('dispatch', 'inspect', 'reap'):
         raise ValueError('unknown runner mode')
-    key = settings.path('RH_SSH_KEY', Path.home() / '.ssh/id_ed25519')
-    hosts = settings.path('RH_KNOWN_HOSTS', Path.home() / '.ssh/known_hosts')
+    key = settings.path('RH_SSH_KEY', Path('.runtime/ssh/id_ed25519'))
+    hosts = settings.path('RH_KNOWN_HOSTS', Path('.runtime/ssh/known_hosts'))
     argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
@@ -1390,7 +1388,7 @@ def dispatch(root, pod, destination, mode='dispatch', expected_generation=None):
         nonce = uuid.uuid4().hex
         command = ("stty raw -echo; export PS1='' PS2=''; unset PROMPT_COMMAND; "
                    "printf '\\nRH_READY_" + nonce + "\\n'; "
-                   'exec python3 /opt/research-harness/pod/runner.py attach\n')
+                   'exec python3 ' + shlex.quote(os.environ.get('RH_REMOTE_RUNNER', 'research-harness/pod/runner.py')) + ' attach\n')
         process.stdin.write(command.encode())
         process.stdin.flush()
         marker = ('\nRH_READY_' + nonce + '\n').encode()
@@ -1424,7 +1422,7 @@ def dispatch(root, pod, destination, mode='dispatch', expected_generation=None):
 def runner_main(argv=None):
     parser = argparse.ArgumentParser(description='On-pod slot runner; never run serve on the controller')
     parser.add_argument('mode', choices=('serve', 'attach'))
-    parser.add_argument('--socket', type=Path, default=Path('/tmp/rh-pod-runner.sock'))
+    parser.add_argument('--socket', type=Path, default=settings.path('RH_RUNNER_SOCKET', Path('.runtime/rh-pod-runner.sock')))
     parser.add_argument('--workspace', type=Path, default=Path('/workspace'))
     parser.add_argument('--vcpus', type=float)
     parser.add_argument('--gpus', type=int)

@@ -15,7 +15,7 @@ import unicodedata
 from urllib.parse import urlsplit
 import uuid
 
-CONTACTS = settings.path('RH_CONTACTS', Path.home() / '.config/ai-research-tools/contacts.json')
+CONTACTS = settings.path('RH_CONTACTS', Path('.runtime/contacts.json'))
 VOICE_COMMAND = settings.command('RH_VOICE_COMMAND', 'voice-check')
 SCIENCE_COMMAND = settings.command('RH_SCIENCE_CHECK_COMMAND', 'science-check')
 CHANNELS = ('email', 'x_reply', 'x_post', 'x_dm', 'linkedin')

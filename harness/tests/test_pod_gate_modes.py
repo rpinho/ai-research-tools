@@ -170,10 +170,11 @@ def test_one_sanitized_line_per_create_noncreate_skipped(tmp_path):
 def test_cli_json_additional_context_and_malformed_input(tmp_path):
     for payload in (json.dumps(event()), '{', 'null', '[]'):
         result = subprocess.run([sys.executable, str(HOOK)], input=payload, text=True, capture_output=True,
-                                env=dict(os.environ, HOME=str(tmp_path), PYTHONPATH=str(ROOT)))
+                                env=dict(os.environ, HOME=str(tmp_path), PYTHONPATH=str(ROOT),
+                                         RH_POD_GATE_AUDIT=str(tmp_path/'audit.jsonl')))
         assert result.returncode == 0 and not result.stderr
         output = json.loads(result.stdout)['hookSpecificOutput']
         assert output['hookEventName'] == 'PreToolUse'
         assert 'rh pods enqueue' in output['additionalContext']
-    audit = tmp_path/'.local/state/research-harness/pod-gate-audit.jsonl'
+    audit = tmp_path/'audit.jsonl'
     assert len(audit.read_text().splitlines()) == 4

@@ -58,9 +58,7 @@ def timestamp(value):
 
 
 def state_root(root):
-    if Path(root).resolve() == (Path.home() / '.local/share/research-harness').resolve():
-        return Path.home() / '.local/state/research-harness'
-    return Path(root) / '.harvest-state'
+    return settings.path('RH_HARVEST_STATE', Path(root) / '.harvest-state')
 
 
 def rows(path):
@@ -118,11 +116,11 @@ class Proxy:
         self.deadline = time.monotonic() + timeout
         self.buffer = b''
         self.token = ('RHH_' + uuid.uuid4().hex + ':').encode()
-        hosts = settings.path('RH_KNOWN_HOSTS', Path.home() / '.ssh/known_hosts')
+        hosts = settings.path('RH_KNOWN_HOSTS', Path('.runtime/ssh/known_hosts'))
         argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
                 '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
                 '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-                '-i', str(settings.path('RH_SSH_KEY', Path.home() / '.ssh/id_ed25519')), pod['ssh_target']]
+                '-i', str(settings.path('RH_SSH_KEY', Path('.runtime/ssh/id_ed25519'))), pod['ssh_target']]
         self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             while b'# ' not in self.buffer:

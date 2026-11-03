@@ -15,7 +15,7 @@ import uuid
 
 
 # Lane-health alerts belong to the agent responsible for recovery.
-AGENT_QUEUE = Path.home() / '.local/state/agent-alerts.jsonl'
+AGENT_QUEUE = Path('.runtime/agent-alerts.jsonl')
 
 
 def queue_path():

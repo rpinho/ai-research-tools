@@ -12,7 +12,7 @@ import sys
 
 VOICE_COMMAND = shlex.split(os.environ.get('RH_VOICE_COMMAND', 'voice-check'))
 BODY_KEYS = ('body', 'text', 'plainText', 'plain_text', 'message', 'content', 'htmlBody', 'html_body', 'html')
-HARNESS = Path(os.environ.get('RH_OUTREACH_ROOT', str(Path.home() / '.local/share/research-harness')))
+HARNESS = Path(os.environ.get('RH_OUTREACH_ROOT', str(Path(__file__).resolve().parents[1] / '.runtime')))
 
 
 def approved_body(tool_input, root=None):

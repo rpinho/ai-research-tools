@@ -3,8 +3,8 @@
 import fcntl, glob, json, os, re, shlex, subprocess, sys, time
 from datetime import datetime
 
-CONF = os.path.expanduser(os.environ.get('EVENT_WATCH_CONF', '~/.config/event-watch'))
-STATE = os.path.expanduser(os.environ.get('EVENT_WATCH_STATE', '~/.local/state/event-watch'))
+CONF = os.path.expanduser(os.environ.get('EVENT_WATCH_CONF', '.runtime/event-watch/config'))
+STATE = os.path.expanduser(os.environ.get('EVENT_WATCH_STATE', '.runtime/event-watch/state'))
 NOTIFY = os.environ.get('EVENT_WATCH_NOTIFY', '')
 
 

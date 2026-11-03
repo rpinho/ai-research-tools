@@ -508,17 +508,19 @@ def test_log_write_failure_propagates_without_retry_or_success(setup, monkeypatc
     h.notify.assert_not_called()
 
 
-def test_state_root_native_alias_and_isolated_harness(tmp_path, monkeypatch):
+def test_state_root_requires_explicit_override_even_for_home_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, 'home', lambda: tmp_path)
     native = tmp_path / '.local/share/research-harness'
     native.mkdir(parents=True)
     alias = tmp_path / 'alias'
     alias.symlink_to(native, target_is_directory=True)
     production_state = tmp_path / '.local/state/research-harness'
-    assert h.state_root(native) == production_state
-    assert h.state_root(alias) == production_state
+    assert h.state_root(native) == native / '.harvest-state'
+    assert h.state_root(alias) == alias / '.harvest-state'
     isolated = tmp_path / 'isolated'
     assert h.state_root(isolated) == isolated / '.harvest-state'
+    monkeypatch.setenv('RH_HARVEST_STATE', str(production_state))
+    assert h.state_root(native) == production_state
 
 
 def manifests(setup):

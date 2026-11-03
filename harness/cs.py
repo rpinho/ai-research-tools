@@ -3,7 +3,7 @@
 
 Unofficial: uses the same local HTTP API the web UI uses (found 10-30 by reading the UI bundle).
 Login = the single-use link from `claude-science url`, posted to /api/auth/nonce; the session cookie
-is kept in ~/.local/state/cs/cookies.txt (0600). Writes need Origin + x-operon-csrf (double-submit).
+is kept in the configured CS_STATE/cookies.txt (0600). Writes need Origin + x-operon-csrf (double-submit).
 
   cs.py login                         mint a link and log in (cookie saved)
   cs.py projects                      list projects (id, name)
@@ -39,7 +39,7 @@ def _discover_base():
     except Exception:
         pass
     return 'http://localhost:8765'
-STATE = os.path.expanduser(os.environ.get('CS_STATE', '~/.local/state/ai-research-tools/cs')); os.makedirs(STATE, mode=0o700, exist_ok=True)
+STATE = os.path.expanduser(os.environ.get('CS_STATE', '.runtime/cs')); os.makedirs(STATE, mode=0o700, exist_ok=True)
 JAR = os.path.join(STATE, 'cookies.txt')
 AUTO_APPROVE = {'local_exec'}
 AUTO_READ = tuple(os.path.abspath(os.path.expanduser(p)) + os.sep for p in os.environ.get('CS_AUTO_READ', '').split(os.pathsep) if p)

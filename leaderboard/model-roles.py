@@ -19,9 +19,9 @@ import sys
 import tempfile
 
 HERE = Path(__file__).resolve().parent
-STATE = Path(os.environ.get('MODEL_STATE', str(Path.home() / '.local/state/ai-research-tools/leaderboard'))).expanduser()
+STATE = Path(os.environ.get('MODEL_STATE', str(Path('.runtime/leaderboard')))).expanduser()
 LEDGER = Path(os.environ.get('MODEL_LEDGER', str(STATE / 'evaluations.jsonl'))).expanduser()
-ROLES_FILE = Path(os.environ.get('RH_ROLES_FILE', str(Path.home() / '.config/ai-research-tools/roles.json'))).expanduser()
+ROLES_FILE = Path(os.environ.get('RH_ROLES_FILE', str(Path('.runtime/roles.json')))).expanduser()
 RH_LANES = Path(os.environ.get('RH_EVIDENCE_ROOT', str(STATE / 'no-evidence-root'))) / 'lanes'
 MIN_N, MIN_DAYS, SEED_RATE, LIFT_N, SETTLE_DAYS, Z = 5, 2, 0.75, 20, 14, 1.96
 MIN_LABS = {'ideation': 2}

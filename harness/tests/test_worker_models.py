@@ -91,6 +91,7 @@ def fake_home(tmp_path):
     work=tmp_path/'work';work.mkdir()
     env=dict(os.environ,HOME=str(home),LAUNCH_DETACHED='1',FORCE_LAUNCH='1',
              LAUNCH_CODEX=str(codex),LAUNCH_STATE=str(tmp_path/'registry'),
+             LAUNCH_ARTIFACT_DIR=str(c),AGENT_BACKEND='codex',
              FAKE_CALL=str(tmp_path/'call.json'),PYTHONDONTWRITEBYTECODE='1', RH_ROLES_FILE=str(home/'.config/model-leaderboard/roles.json'))
     for key in ('LAUNCH_ROLE','LAUNCH_MODEL','LAUNCH_MODEL_OVERRIDE','LAUNCH_RESUME'):env.pop(key,None)
     return home,c,work,env

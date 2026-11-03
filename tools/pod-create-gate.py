@@ -12,8 +12,8 @@ import sys
 import time
 
 HARNESS = Path(os.environ.get('RH_ROOT', str(Path(__file__).resolve().parents[1] / 'harness')))
-CONFIG = Path.home() / '.config/research-harness/pod-gate.json'
-AUDIT = Path.home() / '.local/state/research-harness/pod-gate-audit.jsonl'
+CONFIG = Path(os.environ.get('RH_POD_GATE_CONFIG', str(HARNESS / 'pod-gate.json'))).expanduser()
+AUDIT = Path(os.environ.get('RH_POD_GATE_AUDIT', str(HARNESS / '.runtime/pod-gate-audit.jsonl'))).expanduser()
 LANES = frozenset(filter(None, os.environ.get('RH_POD_LANES', '').split(',')))
 EXCLUDED = frozenset(filter(None, os.environ.get('RH_POLICY_EXCLUDED', '').split(',')))
 sys.path.insert(0, str(HARNESS))

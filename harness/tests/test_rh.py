@@ -417,7 +417,7 @@ class HarnessTests(unittest.TestCase):
                      {'type': 'assistant', 'message': {'model': 'claude-opus-4-6[1m]'}},
                      {'type': 'assistant', 'message': {'model': '<synthetic>'}}]
             (folder / 's1.jsonl').write_text('\n'.join(json.dumps(t) for t in turns))
-            with patch.object(rh.Path, 'home', return_value=Path(tmp)):
+            with patch.dict('os.environ', {'RH_TRANSCRIPTS_ROOT': str(folder.parent)}):
                 with patch.dict('os.environ', {'CLAUDE_CODE_SESSION_ID': 's1'}):
                     self.assertEqual(rh.session_model(), 'claude-opus-4-6')
                 with patch.dict('os.environ', {'CLAUDE_CODE_SESSION_ID': 'none'}):
@@ -425,7 +425,8 @@ class HarnessTests(unittest.TestCase):
 
     def test_banned_cs_sessions_reads_the_daemon_database(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = Path(tmp) / 'operon-cli.db'
+            db = Path(tmp) / 'orgs/synthetic/operon-cli.db'
+            db.parent.mkdir(parents=True)
             con = sqlite3.connect(str(db))
             con.execute('create table frames (id, parent_frame_id, project_id, created_at, model)')
             late = rh.CS_MODEL_RULE_MS + 1
@@ -434,7 +435,7 @@ class HarnessTests(unittest.TestCase):
                 ('child', 'bad', 'proj_a', late, 'claude-opus-5'), ('ok', None, 'proj_a', late, 'claude-opus-5-5'),
                 ('other', None, 'proj_b', late, 'claude-opus-5')])
             con.commit(); con.close()
-            with patch.object(rh.Path, 'home', return_value=Path(tmp)), patch.object(rh, 'CS_DB_GLOB', 'operon-cli.db'):
+            with patch.dict('os.environ', {'RH_CS_DB_ROOT': tmp}):
                 self.assertEqual(rh.banned_cs_sessions('http://localhost:8765/projects/proj_a'), ['bad'])
                 self.assertEqual(rh.banned_cs_sessions(''), [])
 

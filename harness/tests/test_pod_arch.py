@@ -247,10 +247,11 @@ def test_hook_malformed_and_noncreate(tmp_path):
     assert gate.gate(e, tmp_path)[0] == 0
     result = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[2] / 'tools/pod-create-gate.py')],
                             input='{', text=True, capture_output=True,
-                            env=dict(__import__('os').environ, HOME=str(tmp_path)))
+                                env=dict(__import__('os').environ, HOME=str(tmp_path),
+                                         RH_POD_GATE_AUDIT=str(tmp_path/'audit.jsonl')))
     assert result.returncode == 0
     assert 'additionalContext' in result.stdout
-    assert json.loads((tmp_path/'.local/state/research-harness/pod-gate-audit.jsonl').read_text())['receipt_status'] == 'unparsed'
+    assert json.loads((tmp_path/'audit.jsonl').read_text())['receipt_status'] == 'unparsed'
 
 
 def test_copy_handshake_byte_count_hashes_and_fake_terminate(tmp_path):

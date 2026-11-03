@@ -20,11 +20,13 @@ os.environ['RH_POD_LANES'] = 'team,theory,orbits,toy-evolution'
 os.environ['RH_POLICY_EXCLUDED'] = 'restricted-a,restricted-b'
 os.environ['RH_REAP_EXCLUDED'] = 'restricted-a,restricted-b'
 for key in ('RH_ROLES_FILE', 'RH_CONTACTS', 'RH_DECIDED_BY', 'CLAUDE_CODE_SESSION_ID', 'RH_EVIDENCE_ROOT',
-            'MODEL_OVERRIDES', 'MODEL_REVIEW_ROOT', 'MODEL_DRAFTS_LOG', 'MODEL_STATE', 'MODEL_LEDGER', 'RH_ROOT', 'LAUNCH_SELECTOR', 'LAUNCH_ARTIFACT_DIR', 'LAUNCH_IDEA', 'LAUNCH_IDEA_ROOT'):
+            'MODEL_OVERRIDES', 'MODEL_REVIEW_ROOT', 'MODEL_DRAFTS_LOG', 'MODEL_STATE', 'MODEL_LEDGER', 'RH_ROOT', 'LAUNCH_SELECTOR', 'LAUNCH_ARTIFACT_DIR', 'LAUNCH_IDEA', 'LAUNCH_IDEA_ROOT',
+            'RH_TRANSCRIPTS_ROOT', 'RH_CS_DB_ROOT', 'RH_HARVEST_STATE', 'RH_POD_GATE_CONFIG', 'RH_POD_GATE_AUDIT', 'LAUNCH_MODEL', 'LAUNCH_MODEL_OVERRIDE'):
     os.environ.pop(key, None)
 _RUNTIME = Path(_TEST_HOME.name) / 'runtime'
 _RUNTIME.mkdir()
 os.environ['RH_ROOT'] = str(_RUNTIME)
+os.environ['AGENT_BACKEND'] = 'codex'
 FIXTURE = Path(__file__).parent / 'tests/fixtures/check.py'
 os.environ['RH_VOICE_COMMAND'] = shlex.join([sys.executable, str(FIXTURE), 'voice'])
 os.environ['RH_SCIENCE_CHECK_COMMAND'] = shlex.join([sys.executable, str(FIXTURE), 'science'])

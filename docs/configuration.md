@@ -7,28 +7,54 @@ Use an isolated writable root with `python3 harness/rh.py --root PATH ...`. It c
 | `RH_POD_LANES` | Comma-separated eligible pod lane names; empty by default. |
 | `RH_POLICY_EXCLUDED` | Explicit legacy evidence-policy exemptions; empty by default. New deployments should keep it empty. The capacity hook also recognizes these exemptions. |
 | `RH_REAP_EXCLUDED` | Comma-separated protected pod names or lane names; empty by default. |
-| `RH_ROLES_FILE` | Local generated roles/routes JSON; default `$HOME/.config/ai-research-tools/roles.json`. |
-| `RH_AGENT_ALERTS` | Agent alert JSONL queue; default `$HOME/.local/state/agent-alerts.jsonl`. |
+| `RH_ROLES_FILE` | Local generated roles/routes JSON; default `.runtime/roles.json`. |
+| `RH_AGENT_ALERTS` | Agent alert JSONL queue; default `.runtime/agent-alerts.jsonl`. |
 | `RH_NOTIFY_COMMAND` | Optional pod/provider notification executable and quoted arguments; no service supplied. |
-| `RH_CONTACTS` | Private contact file. See [outreach](outreach.md). |
+| `RH_CONTACTS` | Private contact file; default `.runtime/contacts.json`. See [outreach](outreach.md). |
 | `RH_VOICE_COMMAND`, `RH_SCIENCE_CHECK_COMMAND` | Separately supplied lint commands. Missing required commands refuse lint. |
 | `RH_TRASH_COMMAND` | Reversible disposal adapter; default `/usr/bin/trash`. Linux deployments must supply a compatible Trash command. There is no destructive fallback. |
-| `RH_SSH_KEY`, `RH_KNOWN_HOSTS` | SSH identity and strict known-hosts file; standard SSH paths by default. |
+| `RH_SSH_KEY`, `RH_KNOWN_HOSTS` | SSH identity and strict known-hosts file; defaults `.runtime/ssh/id_ed25519` and `.runtime/ssh/known_hosts`; set explicitly for an existing SSH setup. |
 | `RH_GH` | GitHub CLI executable used by metadata discovery; default `gh`. |
 | `RH_XCAPTURE_ROOT` | Private root holding `x_capture/KEY.jsonl`; generator default is current directory. |
 | `RH_EVIDENCE_ROOT` | Explicit harness root for leaderboard ingestion. No home/archive discovery. |
 | `MODEL_REVIEW_ROOT`, `MODEL_DRAFTS_LOG` | Explicit private review receipt tree and draft-outcome ledger. |
-| `MODEL_STATE`, `MODEL_LEDGER`, `MODEL_OVERRIDES` | Private scoring state directory, optional ledger path and exclusions config. |
-| `LAUNCH_ARTIFACT_DIR` | Standalone job specs/logs; default `$HOME/.local/state/ai-research-tools/jobs`. A sweep passes its own spec path. |
-| `LAUNCH_STATE`, `LAUNCH_SELECTOR`, `LAUNCH_CODEX` | Job registry, optional selector override and executor. |
+| `MODEL_STATE`, `MODEL_LEDGER`, `MODEL_OVERRIDES` | Private scoring state directory (default `.runtime/leaderboard`), optional ledger path and exclusions config. |
+| `LAUNCH_ARTIFACT_DIR` | Standalone job specs/logs; default `$PWD/.runtime/jobs` after entering WORKDIR. A sweep passes its own spec path. |
+| `LAUNCH_STATE`, `LAUNCH_SELECTOR`, `LAUNCH_CODEX` | Job registry (default `$PWD/.runtime/job-registry`), optional selector override and Codex executable. |
 | `LAUNCH_ROLE`, `LAUNCH_EFFORT` | Role and effort; fixed model overrides also require a reason. |
 | `LAUNCH_IDEA`, `LAUNCH_IDEA_ROOT` | Optional promoted-idea admission check before execution. Requires an `rh` command on PATH. |
-| `EVENT_WATCH_CONF`, `EVENT_WATCH_STATE`, `EVENT_WATCH_NOTIFY` | Watch rules, cursor/event state and optional notification executable. |
-| `POLL_GUARD_STATE` | Private hook fingerprint directory. |
-| `CS_BASE`, `CS_BIN`, `CS_STATE`, `CS_AUTO_READ` | Optional local daemon URL, CLI, cookie directory and path-separated auto-readable roots. Auto-read roots default to empty. |
+| `EVENT_WATCH_CONF`, `EVENT_WATCH_STATE`, `EVENT_WATCH_NOTIFY` | Watch rules (default `.runtime/event-watch/config`), cursor/event state (default `.runtime/event-watch/state`) and optional notification executable. |
+| `POLL_GUARD_STATE` | Private hook fingerprint directory; default `.runtime/poll-guard`. |
+| `CS_BASE`, `CS_BIN`, `CS_STATE`, `CS_AUTO_READ` | Optional local daemon URL, CLI, cookie directory (default `.runtime/cs`) and path-separated auto-readable roots. Auto-read roots default to empty. |
 
-The capacity hook reads `$HOME/.config/research-harness/pod-gate.json`: `mode` is `audit` or `enforce`; `enforce_lanes` is an array drawn from `RH_POD_LANES`. Its audit log is under `$HOME/.local/state/research-harness/`. Configure `RH_ROOT` for the hook's queue root. Hooks are not installed automatically.
+All data paths default to the current workspace/runtime, not a personal HOME.
+Absolute data paths are accepted when a caller supplies a documented setting,
+CLI path or lane configuration. Standard system executable paths such as
+`/usr/bin/ssh` and `/usr/bin/trash` are executable dependencies, not data discovery.
+Provider CLIs manage their own login/config outside the harness; choose HOME and
+provider-specific config directories before invocation.
 
-The launcher stays synchronous so the sweep can bound and clean its process group. Capacity retries are limited to five attempts and resume from checkpoint files. It uses the executor's workspace-write sandbox; external provider access and approval policy remain your deployment's responsibility. It does not install a watchdog or claim that a registered job will restart automatically.
+| Additional setting | Meaning |
+|---|---|
+| `AGENT_BACKEND` | `codex` (default) or `claude`; invalid values refuse. |
+| `LAUNCH_CLAUDE`, `LAUNCH_CLAUDE_BUDGET` | Claude executable and per-run dollar cap (default `1.00`); no automatic Claude retries. |
+| `RH_POD_GATE_CONFIG`, `RH_POD_GATE_AUDIT` | Capacity policy (default `$RH_ROOT/pod-gate.json`) and audit log (default `$RH_ROOT/.runtime/pod-gate-audit.jsonl`). |
+| `RH_HARVEST_STATE` | Snapshot state override; default `<root>/.harvest-state`. |
+| `RH_OUTREACH_ROOT` | Approval hook's ledger root; default repo `.runtime`. |
+| `RH_ANSWERS_FILE` | Optional local answers file; default `.runtime/ANSWERS.md`; CLI `--answers-file` overrides it. |
+| `RH_TRANSCRIPTS_ROOT` | Explicit Claude project-transcript tree for session-model detection; disabled when unset. |
+| `RH_CS_DB_ROOT` | Explicit daemon data root containing `orgs/*/operon-cli.db`; disabled when unset. |
+| `RH_REMOTE_RUNNER` | Deployed runner path on a pod; default relative `research-harness/pod/runner.py`; quote-safe in the SSH shell command. |
+| `RH_RUNNER_SOCKET` | Local pod-runner socket; default `.runtime/rh-pod-runner.sock`; CLI `--socket` overrides it. |
+
+Capacity policy uses `mode = audit|enforce` and `enforce_lanes` drawn from
+`RH_POD_LANES`. Hooks are not installed automatically. Set `RH_ROOT` explicitly
+when using them in a deployment.
+
+The launcher stays synchronous so a sweep can bound its process group. Codex
+capacity retries are limited to five attempts. Claude has one attempt so a retry
+cannot reset its dollar cap. Codex uses workspace-write; Claude uses acceptEdits
+and preapproved file tools, without an OS sandbox from this runner. External
+access and credentials belong to the caller. No watchdog is installed.
 
 Launchd templates under [harness/templates](../harness/templates) contain `@...@` placeholders. Render them into your own scheduler directory, choose Python and root paths, and inspect before loading. Template files are not active jobs. Linux users can schedule the same commands with their existing scheduler.

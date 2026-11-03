@@ -39,7 +39,6 @@ CS_DEFAULT_MODEL = 'claude-opus-5-5'
 CS_ALTERNATE_MODEL = 'claude-opus-4-6'
 CS_BANNED_MODELS = {'claude-opus-5'}
 CS_MODEL_RULE_MS = 1793387000000  # sessions before this are history, not violations
-CS_DB_GLOB = '.claude-science/orgs/*/operon-cli.db'
 EXTERNAL = {'paper', 'community', 'x', 'claude-science', 'organiser', 'answers'}
 SOURCES = sorted(EXTERNAL | {'internal', 'owner'})
 STOP_PATTERNS = (r'no ideas', r'out of ideas', r'recommend stopping', r'we could stop', r'nothing left to try')
@@ -47,7 +46,7 @@ STATUSES = {'new', 'testing', 'closed', 'shipped'}
 # Promote and close are taste calls (is it new, is it worth testing, is it dead), so they record who decided,
 # and only these may decide. Sol may close an idea only mechanically: a result file showing the frozen bar failed.
 TASTE_FALLBACK = ('claude-opus-5-5', 'claude-fable', 'claude-science')
-ROLES_FILE = settings.path('RH_ROLES_FILE', Path.home() / '.config/ai-research-tools/roles.json')
+ROLES_FILE = settings.path('RH_ROLES_FILE', Path('.runtime/roles.json'))
 
 
 def taste_models(n=3):
@@ -497,7 +496,10 @@ def session_model():
     session = os.environ.get('CLAUDE_CODE_SESSION_ID')
     if not session:
         return None
-    for path in Path.home().glob('.claude/projects/*/{}.jsonl'.format(session)):
+    transcripts = os.environ.get('RH_TRANSCRIPTS_ROOT')
+    if not transcripts or not re.fullmatch(r'[A-Za-z0-9-]+', session):
+        return None
+    for path in Path(transcripts).expanduser().glob('*/{}.jsonl'.format(session)):
         with path.open('rb') as handle:
             handle.seek(max(0, path.stat().st_size - 4000000))
             lines = handle.read().decode('utf-8', 'ignore').splitlines()
@@ -522,7 +524,10 @@ def banned_cs_sessions(project_url):
         return []
     marks = ','.join('?' for _ in CS_BANNED_MODELS)
     found = []
-    for db in Path.home().glob(CS_DB_GLOB):
+    db_root = os.environ.get('RH_CS_DB_ROOT')
+    if not db_root:
+        return []
+    for db in Path(db_root).expanduser().glob('orgs/*/operon-cli.db'):
         con = sqlite3.connect('file:{}?mode=ro'.format(db), uri=True, timeout=5)
         try:
             found += [r[0] for r in con.execute(
@@ -818,7 +823,7 @@ def parser():
     a.add_argument('lane')
     a = sub.add_parser('answers-sync')
     a.add_argument('lane')
-    a.add_argument('--answers-file', type=Path, default=settings.path('RH_ANSWERS_FILE', Path.home() / '.local/share/ai-research-tools/ANSWERS.md'))
+    a.add_argument('--answers-file', type=Path, default=settings.path('RH_ANSWERS_FILE', Path('.runtime/ANSWERS.md')))
     return p
 
 

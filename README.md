@@ -1,14 +1,21 @@
 # AI tools for research
 
-Tools for running AI agents on open research problems and competitions without letting them overfit, stall or spam people. The research harness records ideas and evidence, checks lane rules, watches delivery cadence, and manages bounded workers. The [model leaderboard](LEADERBOARD.md) is one input to model routing.
+Tools for running AI agents on open research problems and competitions with checks against overfitting, stalled work and unapproved outreach. The research harness records ideas and evidence, checks lane rules, watches delivery cadence, and manages bounded workers. The [model leaderboard](LEADERBOARD.md) is one input to model routing.
 
 A **lane** is one research problem with its own queue, rules, schedule and results. Lane state stays local. This repository contains code, synthetic examples and a dated model snapshot.
 
 ## Quickstart
 
-Python 3.9 or later runs the harness using the standard library. Install pytest to run its tests. The optional job launcher needs zsh and an executor CLI; the toy preview uses neither an executor nor the network.
+Start in a clone or extracted copy of this repository. Python 3.9 or later runs
+the harness using the standard library; the selection gate also needs NumPy.
+Create a virtual environment and install the declared dependencies before tests.
+The paid worker example needs zsh and an authenticated executor CLI on PATH.
+The toy preview uses neither an executor nor the network.
 
 ```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python3 -m pip install -r requirements-dev.txt
 python3 examples/toy_demo.py --root .runtime/toy
 python3 harness/rh.py --root .runtime/toy ideas list toy
 python3 harness/rh.py --root .runtime/toy sweep toy --dry-run
@@ -26,9 +33,48 @@ python3 leaderboard/model-roles.py bootstrap --output "$RH_ROLES_FILE"
 
 See [configuration](docs/configuration.md) before connecting an executor, remote pod, contact file or notification command.
 
+## Run one real toy worker
+
+Install [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) or
+[Claude Code](https://code.claude.com/docs/en/setup) separately. Each provider
+requires an account with model access. Authenticate **in the same HOME and
+environment that will run the worker**: `codex login` for Codex, or `claude auth login`
+for Claude Code. Check with `codex login status` or `claude auth status`.
+[Codex authentication](https://learn.chatgpt.com/docs/auth) also supports an API key
+piped to `codex login --with-api-key`; keep credentials outside this repository.
+For automated Claude authentication, supply your own `CLAUDE_CODE_OAUTH_TOKEN`
+(from `claude setup-token`) or `ANTHROPIC_API_KEY` through your secret manager.
+Do not copy credentials from another HOME as an installation shortcut.
+
+After the quickstart, choose either command, or run both with separate roots:
+
+```sh
+AGENT_BACKEND=codex python3 examples/toy_worker.py --root .runtime/toy-codex
+AGENT_BACKEND=claude python3 examples/toy_worker.py --root .runtime/toy-claude
+```
+
+Each command starts exactly one worker through `tools/launch.sh`, asks it to write
+an integer sequence and search/read/kill reports, and verifies the exact result.
+It writes `receipts/toy.json`, a hash-bound `receipts/selection.json`, model selection
+and outcome events in `jobs/toy-worker.log`, the provider output in
+`jobs/toy-worker.last.md`, and a finished registry record under the chosen root.
+A fresh root is mandatory. The toy uses `gpt-6.1-sol` or `claude-haiku-5-5`, low
+effort and a three-minute timeout. Claude has a $1 per-run CLI budget and no
+launcher retries; actual pricing and account access depend on the provider.
+Codex has no dollar cap in this launcher. The toy claims no statistical holdout.
+
+For general jobs set `AGENT_BACKEND=codex|claude` (default `codex`) and supply
+compatible routes through `RH_ROLES_FILE`. There is no automatic backend/model
+substitution. Claude uses `acceptEdits`, preapproved file tools and an empty MCP
+configuration; it has no OS sandbox supplied by this runner. Codex uses
+`workspace-write`. Both inherit caller authentication. A clean HOME excludes
+personal context but requires its own login. If that login is unavailable, a
+fresh clone outside personal directories with an existing login is a useful
+integration test, but does not prove authentication in an empty HOME.
+
 ## Enforced contracts
 
-- [Sealed selection](docs/sealed-selection.md): promotion records the holdout declaration and freezes the test and pass line. Data access separation belongs to the lane's experiment environment.
+- [Sealed selection](docs/sealed-selection.md): a [selection package](selection/README.md) computes conservative decisions and hashes artifacts; promotion freezes a test/pass line. The [overfitting map](docs/overfitting.md) distinguishes defaults, optional checks and missing controls.
 - [Idea intake, sweeps and kill-tests](docs/idea-intake.md): append-only idea events, source screening, required rule files, bounded workers and result receipts.
 - [Lane cadence, lint and alerts](docs/lane-cadence.md): delivery checks remain active when workers are disabled; lane-health alerts enter an agent queue.
 - [Pods and harvesting](docs/pods.md): ownership, capacity receipts, atomic claims, deadlines and verified copies before supported shutdown paths.

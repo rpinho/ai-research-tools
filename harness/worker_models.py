@@ -15,7 +15,7 @@ import re
 import sys
 import uuid
 
-ROLES_FILE = settings.path('RH_ROLES_FILE', Path.home() / '.config/ai-research-tools/roles.json')
+ROLES_FILE = settings.path('RH_ROLES_FILE', Path('.runtime/roles.json'))
 
 
 def select(role, executor, model='', override='', path=None):

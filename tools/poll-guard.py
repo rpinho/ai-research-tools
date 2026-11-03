@@ -6,7 +6,7 @@ import re
 import sys
 import time
 
-STATE_DIR = os.path.expanduser(os.environ.get("POLL_GUARD_STATE", "~/.local/state/poll-guard"))
+STATE_DIR = os.path.expanduser(os.environ.get("POLL_GUARD_STATE", ".runtime/poll-guard"))
 WINDOW_S = 30 * 60      # how long a fingerprint is remembered
 FREE_CHECKS = 2         # identical checks allowed inside the window
 
@@ -88,7 +88,7 @@ def main():
     deny(
         f"[poll-guard] This is check #{len(hits)} of the same thing in {mins} min, and each one "
         "costs a full turn that re-reads your whole context. Don't look again — be told.\n"
-        "Add what you are waiting for to ~/.config/event-watch/<job>.conf (new <glob> for a result, "
+        "Add what you are waiting for to $EVENT_WATCH_CONF/<job>.conf (new <glob> for a result, "
         "match <log> <regex> for errors or exit lines, stale <glob> <min> for a hang, pid <pid> for a "
         "crash, deadline <ISO>), then run `event-watch wait <job>` as a BACKGROUND Bash task "
         "(run_in_background: true). It blocks until something happens and the completion "
