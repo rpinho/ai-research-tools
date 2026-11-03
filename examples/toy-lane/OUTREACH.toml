@@ -1,0 +1,5 @@
+# Uses a separately configured private contact file and voice command.
+question_limit = 1
+x_question_limit = 1
+follow_up_days = 7
+science_checks = false

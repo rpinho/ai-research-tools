@@ -1,0 +1,6 @@
+deliverable = "toy verified result"
+every_hours = 24
+warn_hours = 18
+evidence_root = "."
+evidence_globs = ["reports/*-verified.md"]
+owner_session = "toy-agent"

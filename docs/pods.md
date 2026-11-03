@@ -1,0 +1,13 @@
+# Pods that end themselves, and harvesting
+
+Configure eligible lanes with `RH_POD_LANES`; no deployment lanes are built into the runtime. A pod registry records explicit ownership, resources, result roots and a deadline. Unknown queue ownership can alert but cannot authorize automatic shutdown. `keep` and configured reaper exclusions are explicit protections.
+
+The work queue uses file locks, claim tokens and owner checks to prevent duplicate claims. Capacity planning compares runnable work, CPU/GPU slots and resource declarations. `tools/pod-create-gate.py` checks a recent matching capacity receipt. It defaults to audit and only denies opted-in lanes in enforce mode. Receipt expiry and queue changes invalidate admission. Install the hook wherever pods are actually created; the library alone cannot intercept a provider request.
+
+Deploy the harness modules (including `settings.py`, `storage.py`, `harvest.py` and `harvest_reader.py`) and `pod/runner.py` together on the pod. The runner schedules local jobs, enforces claims and process cleanup, and coordinates through a controller-initiated Unix socket attachment over SSH. When a supported owned queue finishes, its shutdown path verifies a full copy before termination. The reaper similarly requires ownership, stable completion evidence and a verified harvest; network loss never means that a pod is done.
+
+Harvests are incremental immutable snapshots with manifests and hashes. Covered duplicate snapshots can leave the active snapshot set only after reference and hash-coverage checks; they move to the configured system Trash rather than being destroyed. Readers reject symlink traversal and special files, skip media and files over 200 MB, and refuse insufficient free disk. Low-disk mode can preserve changed small files but marks the snapshot unverified; it cannot authorize shutdown requiring a full verified copy. Large models or other skipped artifacts need an explicit retention solution.
+
+A provider-side hard deadline must be installed separately so the pod can terminate if the controller disappears. `tools/pod-deadline-gate.py` only checks that command text contains a bounded sleep and termination marker. It can be fooled and is not proof of a working deadline. Test actual termination in a disposable environment before relying on it. This repo provisions no pods and ships no credentials or SSH targets.
+
+Code: [pods.py](../harness/pods.py), [harvest.py](../harness/harvest.py), [harvest_reader.py](../harness/harvest_reader.py). Behavioral tests cover competing claims, disconnects and copy-before-shutdown in [test_pod_arch.py](../harness/tests/test_pod_arch.py) and [test_pod_reap.py](../harness/tests/test_pod_reap.py).

@@ -1,0 +1,13 @@
+__pycache__/
+.pytest_cache/
+*.py[cod]
+.venv/
+*.json
+*.jsonl
+*.lock
+*.bak-*
+*.bak
+harness/lanes/
+harness/alerts/
+.harness-state/
+.runtime/

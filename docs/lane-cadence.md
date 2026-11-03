@@ -1,0 +1,11 @@
+# Lane cadence, lint and agent alerts
+
+Disabling sweep workers must not hide a missed deliverable. `CADENCE.toml` describes the output, interval, warning threshold, owner and evidence locations. Cadence evaluates delivery independently of worker enablement. It uses configured file mtimes or timestamps in a receipt log; a configured receipt log is authoritative, and failed attempts can be excluded through a success field. Future timestamps never count as delivery.
+
+A fixed release epoch bounds initial grace. Restarting a monitor does not reset it. The monitor reports healthy, warning, stalled or configuration states and records transitions, recovery and retry state. Missing evidence and malformed configuration remain visible. Lint also checks queue depth, source freshness, unread ideas, overdue tests, receipt integrity and outreach follow-ups.
+
+Lane-health notifications append to `RH_AGENT_ALERTS`, an on-disk agent queue. Payloads carry lane/check summaries, not log or dataset contents. A consuming agent must be scheduled separately; writing the queue does not itself wake a model. Pod/provider alerts use a separately configured notification adapter.
+
+`tools/event-watch` can wait for new paths, stale files, process exit, matching log lines and deadlines. It establishes an initial baseline and tracks offsets, so old lines do not repeatedly trigger. Optional notifications are off unless configured. `tools/poll-guard.py` allows two identical foreground status checks in a 30-minute window and denies the third. Background commands, mutations and `# poll-ok` bypass it; errors fail open. It is a backstop, not a polling ban.
+
+Code: [cadence.py](../harness/cadence.py), [lane_alerts.py](../harness/lane_alerts.py). Tests: [test_lane_health.py](../harness/tests/test_lane_health.py).

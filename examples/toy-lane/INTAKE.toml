@@ -1,0 +1,12 @@
+# Synthetic sequence problem. No remote sources are enabled.
+keywords = ["synthetic integer sequence"]
+arxiv_queries = []
+biorxiv_pages = 0
+community_urls = []
+github_pr_repos = []
+minimum_attempts = 2
+claude_science_required = false
+
+[[banned_patterns]]
+pattern = "sealed-selection"
+reason = "Selection targets are available only to an independent selector."

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>org.example.research-lane-health</string>
+<key>ProgramArguments</key><array><string>@PYTHON@</string><string>@REPO_ROOT@/harness/rh.py</string><string>--root</string><string>@RH_ROOT@</string><string>lanes</string><string>check</string></array>
+<key>EnvironmentVariables</key><dict><key>RH_ROOT</key><string>@RH_ROOT@</string></dict>
+<key>StartInterval</key><integer>3600</integer>
+<key>WorkingDirectory</key><string>@REPO_ROOT@</string>
+<key>StandardOutPath</key><string>@LOG_DIR@/lane-health.log</string>
+<key>StandardErrorPath</key><string>@LOG_DIR@/lane-health.err</string>
+</dict></plist>
