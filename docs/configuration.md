@@ -70,3 +70,5 @@ be overridden with `--workspace`. Harvest's `/workspace/` check is a remote-path
 allowlist, not discovery of local files. `MODEL_MINE_OUT` defaults to
 `.runtime/model-mine` and `--out` overrides it. Missing evidence fails directly,
 without probing a made-up absolute sentinel file.
+
+New lanes created with `rh lane new` also contain `LANE.json` (frozen problem, metric, deadline, test/bar, submission rules and access declarations) and `SELECTION.json` (v2 policy). Lint checks their hashes and lane limits. A 24-hour setup grace applies only while workers are disabled and no idea, intake, sweep or sealed-scoring history exists. Afterwards the ordinary reading, queue and delivery checks apply. `workers_enabled=false` refuses real sweeps while preserving previews. These local hashes detect accidental edits; they are not an authenticated audit service.

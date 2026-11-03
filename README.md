@@ -4,23 +4,26 @@ Tools for running AI agents on open research problems and competitions with chec
 
 A **lane** is one research problem with its own queue, rules, schedule and results. Lane state stays local. This repository contains code, synthetic examples and a dated model snapshot.
 
+Agents: start with [AGENTS.md](AGENTS.md), the single source of agent instructions.
+
 ## Quickstart
 
 Start in a clone or extracted copy of this repository. Python 3.9 or later runs
 the harness using the standard library; the selection gate also needs NumPy.
-Create a virtual environment and install the declared dependencies before tests.
+Run the idempotent bootstrap to create a virtual environment and install dependencies.
 The paid worker example needs zsh and an authenticated executor CLI on PATH.
 The toy preview uses neither an executor nor the network.
 
 ```sh
-python3 -m venv .venv
+scripts/bootstrap.sh
 . .venv/bin/activate
-python3 -m pip install -r requirements-dev.txt
 python3 examples/toy_demo.py --root .runtime/toy
 python3 harness/rh.py --root .runtime/toy ideas list toy
 python3 harness/rh.py --root .runtime/toy sweep toy --dry-run
 python3 -m pytest -q
 ```
+
+For a user-owned problem, follow [new-lane](.claude/skills/new-lane/SKILL.md): `rh --root .runtime lane new NAME --help` creates frozen v2 declarations; then lint and preview using the commands in [AGENTS.md](AGENTS.md). New lanes keep real workers disabled and have at most 24 hours of setup lint grace; no external reading or results are claimed.
 
 The demo creates an invented integer-sequence lane and previews search, read and kill-test instructions. Choose a fresh root on subsequent runs. A real sweep without `--dry-run` starts configured workers and can use remote sources. Do not enable workers until you have supplied your own access controls and lane policy.
 

@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 """Append-only research inputs. Python 3.9+, standard library only."""
 import settings
+import lane_setup
 import argparse
 import ast
 import collections
@@ -593,16 +594,18 @@ def lint_result(lane, report=None):
     cfg = lane_config(lane)
     runs = rows(lane / 'INTAKE_RUNS.jsonl')
     errors, n = LintErrors(), depth(history)
-    if n < 3:
+    errors.add_many('lane-declarations', lane_setup.audit(lane, sys.modules[__name__]))
+    setup = lane_setup.in_setup(lane, sys.modules[__name__])
+    if n < 3 and not setup:
         errors.add('queue-depth', 'queue depth(new|testing)={} < 3'.format(n))
     recent_runs = [r for r in runs if recent(r.get('created', ''))]
     external = any(r.get('source_type') in EXTERNAL and recent(r.get('created', '')) for r in history)
     read = any(r.get('sources_read') for r in recent_runs)
-    if not external and not read:
+    if not setup and not external and not read:
         errors.add('external-reading', 'no external source added or successfully read in last 24 h')
-    if not recent_runs:
+    if not recent_runs and not setup:
         errors.add('intake-freshness', 'no intake run recorded in last 24 h')
-    elif not read:
+    elif not read and not setup:
         errors.add('intake-reading', 'intake read no external sources in last 24 h')
     if cfg.get('depth_tags'):
         current = latest(history)
@@ -646,11 +649,12 @@ def lint_result(lane, report=None):
     errors.add_many('idea-policy', policy_errors)
     sweep_errors, grandfathered = sweep.lint(lane, sys.modules[__name__])
     errors.add_many('sweep-obligations', sweep_errors)
-    errors.add_many('lane-cadence', cadence.lint(lane, sys.modules[__name__]))
+    if not setup:
+        errors.add_many('lane-cadence', cadence.lint(lane, sys.modules[__name__]))
     errors.add_many('pod-health', pods.lint(lane, sys.modules[__name__]))
     outreach_errors = outreach.health(lane, sys.modules[__name__])
     errors.add_many('outreach', outreach_errors)
-    return dict(lane=lane.name, status='FAIL' if errors else 'OK', depth=n,
+    return dict(lane=lane.name, status='FAIL' if errors else 'OK', depth=n, setup=setup,
                 failure_count=len(errors), failures=errors.failures,
                 warnings=policy_warnings, grandfathered=grandfathered,
                 outreach=dict(status='FAIL' if outreach_errors else 'OK', count=len(outreach.current(lane, sys.modules[__name__]))))
@@ -677,7 +681,10 @@ def print_lint(result):
     for failure in result['failures']:
         print('FAIL {}: {}'.format(lane, failure['message']))
     if not result['failures']:
-        print('OK {}: depth={}; external reading and intake fresh'.format(lane, result['depth']))
+        if result.get('setup'):
+            print('OK {}: setup grace (24h maximum); frozen declarations valid; no reading or results claimed'.format(lane))
+        else:
+            print('OK {}: depth={}; external reading and intake fresh'.format(lane, result['depth']))
 
 
 def lint(lane, report=None):
@@ -742,6 +749,7 @@ def parser():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--root', type=Path, default=settings.path('RH_ROOT', ROOT), help='isolated harness root (default: installed root)')
     sub = p.add_subparsers(dest='command', required=True)
+    lane_setup.arguments(sub)
     pods.arguments(sub)
     cadence.arguments(sub)
     outreach.arguments(sub)
@@ -849,6 +857,8 @@ def parser():
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command == 'lane':
+            return lane_setup.main(args.root, args, sys.modules[__name__])
         if args.command == 'outreach':
             return outreach.main(args.root, args, sys.modules[__name__])
         if args.command == 'prior-art':

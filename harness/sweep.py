@@ -736,7 +736,13 @@ def main(root, args, rh):
         if not lane.is_dir():
             continue
         try:
+            import lane_setup
+            declaration_errors = lane_setup.audit(lane, rh)
+            if declaration_errors:
+                raise ValueError('; '.join(declaration_errors))
             cfg = load(lane, rh)
+            if not args.dry_run and cfg.get('workers_enabled', True) is not True:
+                raise ValueError('workers disabled; review the dry-run plan and configure SWEEP.toml workers_enabled=true before a real run')
             if not cfg['enabled']:
                 print('SKIP {}: sweep disabled'.format(lane.name))
                 continue
