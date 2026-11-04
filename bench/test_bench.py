@@ -125,6 +125,8 @@ def test_usage_is_exact_and_tools_fail_closed(tmp_path):
     log = tmp_path/'log'
     log.write_text(json.dumps(dict(type='turn.completed', usage=dict(
         input_tokens=100, cached_input_tokens=40, output_tokens=20)))+'\n')
+    with log.open('a') as stream:
+        stream.write(json.dumps(dict(type='item.completed', item=dict(type='error', message='CLI diagnostic')))+'\n')
     usage = run.usage_from_log(log)
     assert usage['tokens'] == dict(input_tokens=100, cached_input_tokens=40, output_tokens=20)
     assert usage['usd'] is None and usage['usd_reason']
@@ -191,3 +193,35 @@ def test_changed_predictions_refused_before_sealed_accounting(tmp_path):
     with pytest.raises(ValueError, match='changed after producer'):
         selector.evaluate('concrete', 'v2-selection', data, output, '0'*64)
     assert not (output/'sealed-scoring.jsonl').exists()
+
+
+def test_response_recovery_uses_completed_turn_once_without_model_call(tmp_path):
+    from types import SimpleNamespace
+    source = tmp_path/'runtime/original'
+    source.mkdir(parents=True)
+    setup_data.write_json(source/'freeze.json', dict(manifests={}))
+    setup_data.write_json(source/'model-response.json', cases.stub_plan(['toy']))
+    (source/'prompt.txt').write_text('synthetic prompt')
+    (source/'backend.jsonl').write_text(json.dumps(dict(type='turn.completed', usage=dict(
+        input_tokens=100, cached_input_tokens=0, output_tokens=20)))+'\n')
+    failed = tmp_path/'failed.json'
+    setup_data.write_json(failed, dict(status='failed', backend='codex', setup='v1-default',
+        model='fixture', benchmark_version=cases.VERSION, started_utc='fixture',
+        wall_time_seconds=1., cases=[dict(case='toy')],
+        freeze_sha256=setup_data.file_sha(source/'freeze.json'),
+        usage=dict(log_sha256=setup_data.file_sha(source/'backend.jsonl'))))
+    destination = tmp_path/'recovered'
+    destination.mkdir()
+    args = SimpleNamespace(resume_result=failed, runtime=tmp_path/'runtime',
+                           setup='v1-default', model='fixture')
+    plan, usage, model_wall, recovery = run.recover_plan(args, ['toy'], destination, {})
+    assert plan == cases.stub_plan(['toy']) and usage['tokens']['input_tokens'] == 100
+    assert recovery['new_model_requests'] == 0 and model_wall is None
+    assert (destination/'plan.json').exists()
+    with pytest.raises(FileExistsError):
+        run.recover_plan(args, ['toy'], destination, {})
+
+
+def test_recovery_preserves_backend_identity(tmp_path):
+    with pytest.raises(SystemExit):
+        run.main(['--setup', 'v1-default', '--backend', 'stub', '--resume-result', str(tmp_path/'unused')])

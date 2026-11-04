@@ -1,0 +1,156 @@
+{
+  "backend": "codex",
+  "benchmark_version": "mock-1104-v1",
+  "cases": [
+    {
+      "case": "toy",
+      "cost_reason": "Run failed before per-case evaluation.",
+      "error": "ValueError: model used a tool; scorecard refused",
+      "hidden_test_score": null,
+      "local_validation_score": null,
+      "n_submissions": 0,
+      "status": "failed",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 0.0
+    },
+    {
+      "case": "concrete",
+      "cost_reason": "Run failed before per-case evaluation.",
+      "error": "ValueError: model used a tool; scorecard refused",
+      "hidden_test_score": null,
+      "local_validation_score": null,
+      "n_submissions": 0,
+      "status": "failed",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 0.0
+    },
+    {
+      "case": "crab",
+      "cost_reason": "Run failed before per-case evaluation.",
+      "error": "ValueError: model used a tool; scorecard refused",
+      "hidden_test_score": null,
+      "local_validation_score": null,
+      "n_submissions": 0,
+      "status": "failed",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 0.0
+    }
+  ],
+  "data_manifest_sha256": {
+    "concrete": "3ea2d600222184b8f86b42f17ab3950ac4891a7e92e05ef29f879295e46d3f06",
+    "crab": "3d1f8fcc0d0b45cdcf3e4461e0fc2009cdf463c257d4cfa7e40701e48d759674"
+  },
+  "environment": {
+    "cpu_count": 10,
+    "machine": "arm64",
+    "packages": {
+      "numpy": "2.0.2",
+      "scikit-learn": "1.6.1"
+    },
+    "python": "3.9.6",
+    "system": "Darwin"
+  },
+  "error": "ValueError: model used a tool; scorecard refused",
+  "flags": [
+    {
+      "case": "toy",
+      "detail": "ValueError: model used a tool; scorecard refused",
+      "kind": "breakage"
+    },
+    {
+      "case": "concrete",
+      "detail": "ValueError: model used a tool; scorecard refused",
+      "kind": "breakage"
+    },
+    {
+      "case": "crab",
+      "detail": "ValueError: model used a tool; scorecard refused",
+      "kind": "breakage"
+    }
+  ],
+  "freeze_sha256": "984b0cad45230dc9bdd0565e81c382aea0553e2ca70c19ea5860f93a24909e6d",
+  "model": "gpt-6.1-sol",
+  "notes": [
+    "One model invocation shared across cases; per-case tokens/dollars cannot be attributed.",
+    "Per-case wall time includes local fitting/selection; total also includes preparation/model time.",
+    "Final hidden scores are local mock holdouts, not Kaggle private leaderboard scores.",
+    "One run per setup is a regression observation; run-to-run noise is real."
+  ],
+  "partitions": {
+    "concrete": {
+      "dev": {
+        "groups": 331,
+        "ids_sha256": "e950d9f85372c92b3e0ec09d12242002e1abb9af8abaca0c12c19cc9d22b5419",
+        "rows": 510
+      },
+      "hidden": {
+        "groups": 225,
+        "ids_sha256": "2bc9c69724657815a96769b921d2966a092e520e7b8d21fefe1629cd2bef0242",
+        "rows": 477
+      },
+      "selection": {
+        "groups": 256,
+        "ids_sha256": "d6475af88ff9d2c53128003fc1d3eda49af09bc9bb3ed97e78c02963a9b342ca",
+        "rows": 487
+      },
+      "train": {
+        "groups": 788,
+        "ids_sha256": "d5ab6d81d6827d44cc28bcc6b258b1b1eb68bf1ce03e11a105cade7fe6d60e8d",
+        "rows": 1387
+      }
+    },
+    "crab": {
+      "dev": {
+        "groups": 304,
+        "ids_sha256": "f504c0cf2c54c04ea3d53c7997946806ecb8737bde8a92d02a648f0a5705ef9f",
+        "rows": 304
+      },
+      "hidden": {
+        "groups": 248,
+        "ids_sha256": "9798777225a8adfd8ddaab5e5d5e7787eb2bb3faa1dd06bc9d6b9333ce40b28a",
+        "rows": 248
+      },
+      "selection": {
+        "groups": 237,
+        "ids_sha256": "2c8dc88ae254884dcbd1475e4ba1ce0367e45f624276887946bf5cbb61b2013b",
+        "rows": 237
+      },
+      "train": {
+        "groups": 811,
+        "ids_sha256": "7b68262bf0e95450bebb142026d91c012e909434b22ecb29f569d06bd6c9a6da",
+        "rows": 811
+      }
+    }
+  },
+  "schema_version": 1,
+  "setup": "v1-default",
+  "shared_model_wall_time_seconds": 0.0,
+  "source_hashes": {
+    "bench/__init__.py": "188a94ea0e9dfb0b2cf9161768972e2eb9ec17525a58e090ecd49289e2519857",
+    "bench/cases.py": "ecf90e1e3357fae158eb9f21827cfcd489d755083ad42391b04667479df71c32",
+    "bench/run.py": "55bc8eedd0b54cfaa85ecbaabf6d654464991b5dfc833891cf7da74b023150f4",
+    "bench/selector.py": "d829713a2c723251a181c62b02313eeeaab37fb57eae832521e9f488327cf744",
+    "bench/setup_data.py": "888925204bec05df53d3befa246ab03a4e4014336c428efc33bdaa80d8b667f2",
+    "bench/test_bench.py": "e894ef9dcfe1ac147a8acdc175919ea61bc836259120656b9348253fbb81e304",
+    "bench/worker.py": "fa3ea95dbbc708ea8c926dc5688cfb297fa87a62205e94830a4cb151d07d9514",
+    "examples/toy_demo.py": "db9cfd0fe5b7232c3d43e932f9324f1f65c82f4b114badb55db8567ef5c27680",
+    "harness/agent_executor.py": "87be4d5152b1f7558b256b97aa401d154fada0450328c5cc520e8009b7ed2fc9",
+    "harness/sweep.py": "2d93d7cd0433aab4879a6e46fcbb075e415fea2842ed9692232bd07bf22c6515",
+    "selection/selection_gate/__init__.py": "89372e4d8fa329a25efc47f842f5b45da315d9d6b479af8c1eb0e3074d773d54",
+    "selection/selection_gate/policy.py": "451e75bf4d71118ec94a922c1f7e724a9cca5aa62cc2cb3fcb3403ac63f4d98b",
+    "selection/selection_gate/v2.py": "c1ff327f31beee46da0e4283da5349366741cb0aca567ef17f140dd393d979d8"
+  },
+  "started_utc": "2026-11-04T20-50-02.996297Z",
+  "status": "failed",
+  "usage": {
+    "log_sha256": "681676f4531da87b60a869a417d726cc403be0d1984eb40383d6fb888f363b7e",
+    "tokens": null,
+    "tokens_reason": "Backend not reached.",
+    "usd": null,
+    "usd_reason": "Backend not reached."
+  },
+  "wall_time_seconds": 6.747308875000001
+}

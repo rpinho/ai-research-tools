@@ -30,6 +30,12 @@ supported, with no backend substitution. `--model` defaults to the repository to
 There are no automatic paid retries. The durable paid-attempt ledger allows at
 most two starts, one per setup, in a runtime root, including failed attempts.
 Future independently authorized comparisons need an explicit fresh `--runtime`.
+If a model completed but local response parsing failed before **any** case was
+evaluated, `--resume-result <failed-result.json>` can recover that same response
+without a model request. Use the original `--runtime`, setup and model. Recovery
+checks the original freeze/log hashes, preserves backend identity, refuses any
+already-scored case and writes a single-use recovery marker. It never restores
+the paid-attempt allowance or retries an incomplete model turn.
 
 `bench/data/` is created by setup (or verified/created on first real-case run).
 Nothing downloaded is added to git; the largest source CSV is about 5.2 MB.
@@ -108,4 +114,48 @@ that accounts for repeated use of the final holdout.
 
 ## Recorded comparison
 
-The authorized one-pass Codex comparison will be inserted here after validation.
+Observed on 2026-11-04 on the Mini (Apple M4, Python 3.9.6, NumPy 2.0.2,
+scikit-learn 1.6.1, Codex CLI 0.164.0), using `gpt-6.1-sol`, low effort. Both
+model requests returned the same recipes: small Ridge, medium ExtraTrees and
+medium histogram boosting. Two model requests total; **23,961 input+output
+tokens**, with no billed-dollar figure returned. Per-case usage cannot be
+separated from the shared call.
+
+| Setup | Cases OK | Active wall seconds | Input tokens | Cached input | Output tokens | Billed $ | Breakage / >2x token or time alert |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| `v1-default` | 3/3 | 10.414* | 11,851 | 0 | 147 | null (CLI does not report) | None after local recovery* |
+| `v2-selection` | 3/3 | 8.894 | 11,857 | 0 | 106 | null (CLI does not report) | None |
+
+| Case (metric) | v1 dev | v1 hidden | v1 local seconds | v2 dev | v2 hidden | v2 local seconds | Local submissions v1/v2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Toy (exact match) | 1.0000 | n/a | 0.242 | 1.0000 | n/a | 0.219 | 1 / 1 |
+| Concrete (RMSE) | 13.2005 | 11.6939 | 2.224 | 13.1232 | 11.6901 | 1.571 | 1 / 1 |
+| Crab (MAE) | 1.5881 | 1.5534 | 1.192 | 1.5881 | 1.5534 | 1.208 | 1 / 1 |
+
+Every case used under 1.3 CPU seconds in this observation. V1 selected histogram
+boosting for Concrete; v2 selected ExtraTrees using its conservative ranking.
+Both selected Ridge for Crab. These score deltas are diagnostic observations,
+with **no improvement claim**. Timing is noisy and the v1 recovery prevents a
+clean latency comparison.
+
+*V1 had two integration failures, both retained: a local CLI configuration rejection
+before any model request, then a completed model response whose CLI diagnostic
+messages were misclassified as tool calls by the log parser. The invalid config
+override and parser were fixed. The exact completed response was recovered with
+**zero additional model requests**, before any case had been scored. V1's 10.414s
+sums the original 6.747s execution and 3.666s local recovery; intervening developer
+time and the 0.063s configuration preflight are excluded. Original model-only
+latency was not separately captured and is null with a reason. Local NumPy/Ridge
+floating-point warnings are retained in worker logs; all saved predictions and
+scores passed finite-value checks. These incidents limit this first observation
+and should remain visible to reviewers.
+
+Successful scorecards:
+
+- [v1-default JSON](results/v1-default-2026-11-04T20-52-44.997118Z.json)
+- [v2-selection JSON](results/v2-selection-2026-11-04T20-53-09.946162Z.json)
+
+Retained integration failures:
+
+- [Local configuration rejection, no model request](results/v1-default-2026-11-04T20-48-30.699962Z.json)
+- [Parser rejection, response subsequently recovered](results/v1-default-2026-11-04T20-50-02.996297Z.json)

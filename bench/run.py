@@ -10,6 +10,7 @@ import platform
 import importlib.metadata
 import resource
 import signal
+import shutil
 import subprocess
 import sys
 import time
@@ -67,7 +68,7 @@ def usage_from_log(path):
         if not isinstance(event, dict):
             continue
         item = event.get('item', {})
-        if isinstance(item, dict) and item.get('type') not in (None, 'agent_message', 'reasoning'):
+        if isinstance(item, dict) and item.get('type') not in (None, 'agent_message', 'reasoning', 'error'):
             raise ValueError('model used a tool; scorecard refused')
         if event.get('type') == 'turn.completed':
             turns.append(event.get('usage'))
@@ -118,8 +119,7 @@ def generate_plan(args, cases, artifacts):
     cmd = command('codex', 'codex', args.model, 'low', workspace, output)
     cmd[cmd.index('workspace-write')] = 'read-only'
     cmd[-1:-1] = ['--json', '--ephemeral', '--output-schema', str(schema_path),
-        '-c', 'tools.disable_defaults=true', '-c', 'web_search="disabled"',
-        '-c', 'mcp_servers={}']
+        '-c', 'web_search="disabled"', '-c', 'mcp_servers={}']
     for feature in ('shell_tool', 'apps', 'plugins', 'multi_agent', 'code_mode_host',
                     'browser_use', 'computer_use', 'image_generation', 'view_image'):
         cmd[-1:-1] = ['--disable', feature]
@@ -139,10 +139,47 @@ def generate_plan(args, cases, artifacts):
             for case in cases if case != 'toy'}, sort_keys=True))
     (artifacts/'prompt.txt').write_text(prompt+'\n')
     elapsed = bounded(cmd, artifacts/'backend.jsonl', timeout=MODEL_SECONDS, prompt=prompt, cwd=workspace)
+    write_json(artifacts/'backend-timing.json', dict(wall_time_seconds=elapsed))
     usage = usage_from_log(artifacts/'backend.jsonl')
     plan = validate_plan(json.loads(output.read_text()), cases)
     write_json(artifacts/'plan.json', plan)
     return plan, usage, elapsed
+
+
+def recover_plan(args, cases, artifacts, manifests):
+    """Recover a completed response after a local parser failure, without calling a backend."""
+    original = json.loads(args.resume_result.read_text())
+    if (original.get('status') != 'failed' or original.get('backend') != 'codex' or
+            original.get('setup') != args.setup or original.get('model') != args.model or
+            original.get('benchmark_version') != VERSION):
+        raise ValueError('recovery requires a failed Codex result for the same setup/model/version')
+    matches = [p.parent for p in args.runtime.glob('*/freeze.json')
+               if file_sha(p) == original.get('freeze_sha256') and (p.parent/'backend.jsonl').exists()
+               and file_sha(p.parent/'backend.jsonl') == original.get('usage', {}).get('log_sha256')]
+    if len(matches) != 1:
+        raise ValueError('recovery requires one original freeze/backend log matching the failed result')
+    source, = matches
+    freeze = json.loads((source/'freeze.json').read_text())
+    if freeze['manifests'] != manifests or {row['case'] for row in original['cases']} != set(cases):
+        raise ValueError('recovery data/cases changed')
+    if any(source.glob('*/sealed-scoring.jsonl')) or any(source.glob('*/toy-receipt.json')):
+        raise ValueError('recovery refused: original run already evaluated a case')
+    usage = usage_from_log(source/'backend.jsonl')
+    if usage.get('tokens') is None:
+        raise ValueError('recovery requires one completed model turn with exact usage')
+    plan = validate_plan(json.loads((source/'model-response.json').read_text()), cases)
+    # A recovery is single-use; do not erase this marker or any previous evidence.
+    write_json(source/'recovered.json', dict(result_sha256=file_sha(args.resume_result)))
+    for name in ('backend.jsonl', 'model-response.json', 'prompt.txt'):
+        shutil.copyfile(source/name, artifacts/name)
+    write_json(artifacts/'plan.json', plan)
+    timing = source/'backend-timing.json'
+    model_wall = json.loads(timing.read_text())['wall_time_seconds'] if timing.exists() else None
+    recovery = dict(result_sha256=file_sha(args.resume_result), freeze_sha256=original['freeze_sha256'],
+        original_started_utc=original['started_utc'], original_wall_time_seconds=original['wall_time_seconds'],
+        reason=original.get('error'), new_model_requests=0,
+        timing_note='Wall time sums original execution and local recovery; intervening development time is excluded.')
+    return plan, usage, model_wall, recovery
 
 
 def compare(current, previous):
@@ -175,7 +212,9 @@ def run(args):
         raise ValueError('cases must be distinct names from toy,concrete,crab')
     if args.backend not in ('stub', 'codex'):
         raise ValueError('only stub and codex backends are supported; no backend substitution')
-    if args.backend == 'codex' and not args.allow_paid:
+    if args.resume_result and args.backend != 'codex':
+        raise ValueError('response recovery must retain the codex backend identity')
+    if args.backend == 'codex' and not args.allow_paid and not args.resume_result:
         raise ValueError('Codex requires --allow-paid; the default invocation never silently spends')
     previous = json.loads(args.compare_to.read_text()) if args.compare_to else None
     if previous is not None and (previous.get('schema_version') != 1 or
@@ -224,7 +263,7 @@ def run(args):
             result['partitions'] = {case: m['partitions'] for case, m in manifests.items()}
             if previous is not None and previous.get('data_manifest_sha256') != result['data_manifest_sha256']:
                 raise ValueError('--compare-to uses a different frozen data manifest')
-            if args.backend == 'codex':
+            if args.backend == 'codex' and not args.resume_result:
                 paid_path = args.runtime/'paid-attempts.jsonl'
                 attempts = [json.loads(line) for line in paid_path.read_text().splitlines()] if paid_path.exists() else []
                 if len(attempts) >= 2 or any(a['setup'] == args.setup for a in attempts):
@@ -234,7 +273,12 @@ def run(args):
                     ledger.write(json.dumps(dict(setup=args.setup, at=stamp, model=args.model))+'\n')
                     ledger.flush()
                     os.fsync(ledger.fileno())
-            plan, result['usage'], result['shared_model_wall_time_seconds'] = generate_plan(args, cases, artifacts)
+            if args.resume_result:
+                plan, result['usage'], result['shared_model_wall_time_seconds'], result['recovery'] = recover_plan(args, cases, artifacts, manifests)
+                if result['shared_model_wall_time_seconds'] is None:
+                    result['shared_model_wall_time_reason'] = 'Original response timing was not separately captured; original total is in recovery metadata.'
+            else:
+                plan, result['usage'], result['shared_model_wall_time_seconds'] = generate_plan(args, cases, artifacts)
             result['plan'] = plan
             result['plan_sha256'] = file_sha(artifacts/'plan.json')
             for case in cases:
@@ -276,6 +320,9 @@ def run(args):
                 except ValueError:
                     result['usage']['log_sha256'] = file_sha(backend_log)
         result['wall_time_seconds'] = time.monotonic()-start
+        if result.get('recovery'):
+            result['recovery']['local_wall_time_seconds'] = result['wall_time_seconds']
+            result['wall_time_seconds'] += result['recovery']['original_wall_time_seconds']
         result['status'] = 'ok' if all(c['status'] == 'ok' for c in result['cases']) else 'failed'
         result['flags'] = compare(result, previous)
         args.results.mkdir(parents=True, exist_ok=True)
@@ -297,6 +344,8 @@ def main(argv=None):
     parser.add_argument('--runtime', type=Path, default=REPO/'bench/.runtime')
     parser.add_argument('--results', type=Path, default=REPO/'bench/results')
     parser.add_argument('--compare-to', type=Path)
+    parser.add_argument('--resume-result', type=Path,
+                        help='reuse a completed response from a failed result in this runtime; never call the model')
     args = parser.parse_args(argv)
     for key in ('data_root', 'runtime', 'results'):
         setattr(args, key, getattr(args, key).expanduser().resolve())
