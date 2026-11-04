@@ -4,6 +4,7 @@ Run bounded agents on open research problems and competitions.
 Keep ideas, frozen tests, evidence and delivery cadence in a local **lane**.
 Use independent sealed selection; this repo ships code and synthetic examples.
 Wake the conductor through scripts, never peer messages: [conductor inbox](docs/conductor-inbox.md).
+Lanes that go quiet get a scheduled resume prompt, not a reminder in prose: [lane nudge](docs/lane-nudge.md).
 
 ## Set up and run
 

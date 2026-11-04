@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""Nudge a lane session that has gone quiet. Run it from cron or launchd every 30 minutes.
+
+A lane can stop with nothing set to wake it: its last job ends, the agent replies once and sits at the prompt.
+`rh lanes cadence` notices, but only on the lane's delivery window (often a day), and only if someone runs it.
+Detection without delivery does nothing, so this script delivers. When a lane's tmux pane is idle (no transcript
+write for --idle-min, and no running shell or agent shown in the pane) AND either cadence is WARN/STALLED/BROKEN
+or the pane has simply been idle that long, it types one resume prompt into the pane. That happens at most once
+per --reask seconds per lane.
+
+Sessions are tmux sessions named PREFIX + owner_session (default prefix `claude-`). Transcript freshness comes from
+Claude Code's project directory for the pane's working directory. Lanes marked EXEMPT or UNCONFIGURED by cadence,
+and names in --skip, are never nudged. --dry prints decisions and types nothing.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+
+BEHIND = ('WARN', 'STALLED', 'BROKEN')
+RUNNING = re.compile(r'esc to interrupt|shells? still running|agents? running|still running')
+MSG = ("Harness check (lane-nudge): lane {lane} is {why}, and this session has been idle {idle} min with nothing "
+       "running. Start the next round from the lane's idea queue now, put bounded work on background jobs, and arm "
+       "a watcher on every job so you wake on results. If you are blocked on a human decision, send it through the "
+       "conductor inbox and keep working on something else.")
+
+
+def decide(idle_min, running, status, last_nudge, now, idle_limit=60, reask=7200):
+    """Return the reason to nudge, or None. Pure, so it can be tested without tmux."""
+    if status in ('EXEMPT', 'UNCONFIGURED'):
+        return None
+    if running or idle_min < idle_limit or now - last_nudge < reask:
+        return None
+    return f'{status} on cadence' if status in BEHIND else 'quiet'
+
+
+def panes(tmux, prefix):
+    out = subprocess.run([tmux, 'list-panes', '-a', '-F', '#{session_name}\t#{pane_id}\t#{pane_current_path}'],
+                         capture_output=True, text=True).stdout
+    for row in out.splitlines():
+        name, pane, path = row.split('\t')
+        if name.startswith(prefix):
+            yield name[len(prefix):], pane, path
+
+
+def newest_transcript(path, projects):
+    d = projects / re.sub(r'[/.]', '-', path)
+    files = sorted(d.glob('*.jsonl'), key=lambda p: p.stat().st_mtime) if d.is_dir() else []
+    return files[-1] if files else None
+
+
+def cadence(rh):
+    try:
+        out = subprocess.run([rh, 'lanes', 'cadence', '--json'], capture_output=True, text=True, timeout=120).stdout
+        return {r['owner_session']: r for r in json.loads(out) if r.get('owner_session')}
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return {}
+
+
+def main():
+    home = Path.home()
+    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap.add_argument('--prefix', default=os.environ.get('LANE_NUDGE_PREFIX', 'claude-'))
+    ap.add_argument('--skip', default=os.environ.get('LANE_NUDGE_SKIP', ''),
+                    help='comma-separated owner sessions that are idle by design')
+    ap.add_argument('--idle-min', type=int, default=60)
+    ap.add_argument('--reask', type=int, default=7200)
+    ap.add_argument('--tmux', default=os.environ.get('TMUX_BIN', 'tmux'))
+    ap.add_argument('--rh', default=os.environ.get('RH_BIN', 'rh'))
+    ap.add_argument('--projects', default=str(home / '.claude/projects'))
+    ap.add_argument('--state', default=str(home / '.local/state/lane-nudge'))
+    ap.add_argument('--dry', action='store_true')
+    a = ap.parse_args()
+    skip = {s for s in a.skip.split(',') if s}
+    state = Path(a.state)
+    state.mkdir(parents=True, exist_ok=True)
+    cad = cadence(a.rh)
+    for lane, pane, path in panes(a.tmux, a.prefix):
+        if lane in skip:
+            continue
+        f = newest_transcript(path, Path(a.projects))
+        if not f:
+            continue
+        idle = int((time.time() - f.stat().st_mtime) / 60)
+        tail = subprocess.run([a.tmux, 'capture-pane', '-p', '-t', pane, '-S', '-15'],
+                              capture_output=True, text=True).stdout
+        sf = state / f'{lane}.json'
+        last = json.loads(sf.read_text()).get('at', 0) if sf.exists() else 0
+        c = cad.get(lane, {})
+        why = decide(idle, bool(RUNNING.search(tail)), c.get('status'), last, time.time(), a.idle_min, a.reask)
+        if not why:
+            continue
+        text = MSG.format(lane=lane, why=why, idle=idle)
+        print(f'{lane}: nudge ({why}; idle {idle} min)')
+        if a.dry:
+            continue
+        subprocess.run([a.tmux, 'send-keys', '-t', pane, '-l', '--', text])
+        time.sleep(1)
+        subprocess.run([a.tmux, 'send-keys', '-t', pane, 'Enter'])
+        sf.write_text(json.dumps({'at': time.time(), 'why': why}))
+
+
+if __name__ == '__main__':
+    main()
