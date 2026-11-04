@@ -119,8 +119,7 @@ def generate_plan(args, cases, artifacts):
     cmd[cmd.index('workspace-write')] = 'read-only'
     cmd[-1:-1] = ['--json', '--ephemeral', '--output-schema', str(schema_path),
         '-c', 'tools.disable_defaults=true', '-c', 'web_search="disabled"',
-        '-c', 'mcp_servers={}', '-c', 'model_providers.openai.request_max_retries=0',
-        '-c', 'model_providers.openai.stream_max_retries=0']
+        '-c', 'mcp_servers={}']
     for feature in ('shell_tool', 'apps', 'plugins', 'multi_agent', 'code_mode_host',
                     'browser_use', 'computer_use', 'image_generation', 'view_image'):
         cmd[-1:-1] = ['--disable', feature]
