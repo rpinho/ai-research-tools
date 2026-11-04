@@ -1,5 +1,7 @@
 # Anti-overfitting: enforcement map
 
+The ten practices come from Hugo Fernandes (2026-11-03), written with Claude's help; Claude ran the simulations behind practice 10. See [credits](credits.md).
+
 The status column rates the **default version-1 gate and ordinary harness**.
 Version 2 requires explicit opt-in; installing it does not migrate existing
 receipts or lanes. Its harness and gate checks are listed separately below.
