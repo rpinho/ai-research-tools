@@ -3,6 +3,7 @@
 Run bounded agents on open research problems and competitions.
 Keep ideas, frozen tests, evidence and delivery cadence in a local **lane**.
 Use independent sealed selection; this repo ships code and synthetic examples.
+Wake the conductor through scripts, never peer messages: [conductor inbox](docs/conductor-inbox.md).
 
 ## Set up and run
 

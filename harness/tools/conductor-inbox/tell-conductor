@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""File an inbox message; only decision, human and break request a wake."""
+import argparse
+import json
+import os
+from pathlib import Path
+import time
+import uuid
+
+
+def main():
+    kinds = {"fyi", "decision", "human", "break"}
+    kinds.add(os.environ.get("CONDUCTOR_HUMAN_KIND") or "human")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--from", dest="sender", default=(
+        os.environ.get("CLAUDE_SESSION_NAME") or Path.cwd().name))
+    parser.add_argument("kind", choices=sorted(kinds))
+    parser.add_argument("text", nargs="+")
+    args = parser.parse_args()
+    root = Path(os.environ.get("CONDUCTOR_INBOX_DIR") or (
+        Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state")
+        / "conductor-inbox")).expanduser()
+    root.mkdir(parents=True, exist_ok=True)
+    text = " ".join(args.text)
+    row = {"utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+           "from": args.sender, "kind": args.kind, "text": text}
+    # One append write keeps concurrent small messages from interleaving.
+    payload = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(root / "inbox.jsonl", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    try:
+        if os.write(fd, payload) != len(payload):
+            raise OSError("incomplete inbox append")
+    finally:
+        os.close(fd)
+    if args.kind != "fyi":
+        (root / "wake").mkdir(exist_ok=True)
+        # Sender and message text must never become a filesystem path.
+        marker = root / "wake" / f"{time.time_ns()}-{uuid.uuid4().hex}"
+        marker.write_text(text[:200], encoding="utf-8")
+    name = os.environ.get("CONDUCTOR_NAME") or "conductor"
+    suffix = "wake requested" if args.kind != "fyi" else "filed for the next wake"
+    print(f"{name}: {args.kind}; {suffix}")
+
+
+if __name__ == "__main__":
+    main()
