@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""result-lint: the gate a claim must pass before anyone spends a referee on it.
+
+A claim directory holds CLAIM.md (or RESULT.md). The lint enforces three rules (see docs/normal-first.md):
+
+1. NEW yes/no first. The first non-empty line is `NEW: yes` or `NEW: no`. A `yes` needs a `Printed:` line
+   (the number or open question as printed, with a DOI/arXiv/URL to the source) and an `Ours:` line.
+2. Normal first ("Please let's do normal things unless they don't work"). A `Standard method:` line, and a
+   `Deviations:` line that is `none` or says where the standard method failed (`standard failed: ...`).
+3. Baselines before predictive claims. If the claim reports a predictive metric, BASELINES.json must give the
+   trivial, simple and method scores on the same split, and its `sbs` must match tools/sbs/sbs.py.
+
+Exit 0 = PASS, 1 = FAIL (reasons printed), 2 = usage error. `--new-only` also fails a well-formed `NEW: no`,
+so a loop can skip refereeing claims that say they found nothing new.
+"""
+import argparse, json, re, sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'sbs'))
+from sbs import sbs  # noqa: E402
+
+METRIC = re.compile(r'\b(AUROC|AUPRC|ROC[- ]AUC|AUC|accuracy|balanced accuracy|F1|RMSE|MAE|MSE|R\^?2|R²|'
+                    r'Spearman|Pearson|correlation|mAP|log[- ]loss|top-\d)\b', re.I)
+LOWER = re.compile(r'\b(RMSE|MAE|MSE|log[- ]loss|error|loss)\b', re.I)
+SOURCE = re.compile(r'(doi\.org/|\b10\.\d{4,9}/|arxiv\.org/|arXiv:?\s*\d{4}\.\d{4,5}|https?://)', re.I)
+
+
+def field(text, name):
+    m = re.search(rf'^\s*[-*]?\s*\**{name}\**\s*:\s*(.+)$', text, re.I | re.M)
+    return m.group(1).strip() if m else None
+
+
+def lint(d, new_only=False):
+    d = Path(d)
+    doc = next((d / n for n in ('CLAIM.md', 'RESULT.md') if (d / n).is_file()), None)
+    if doc is None:
+        return ['no CLAIM.md or RESULT.md']
+    text = doc.read_text(errors='replace')
+    errs = []
+    first = next((l.strip().strip('*#').strip() for l in text.splitlines() if l.strip()), '')
+    m = re.fullmatch(r'NEW\s*:\s*(yes|no)\b.*', first, re.I)
+    if not m:
+        errs.append('first line must be "NEW: yes" or "NEW: no" (did you find something new?)')
+        new = None
+    else:
+        new = m.group(1).lower() == 'yes'
+    if new:
+        printed, ours = field(text, 'Printed'), field(text, 'Ours')
+        if not printed or not SOURCE.search(printed):
+            errs.append('NEW: yes needs a "Printed:" line with the printed number or open question and its DOI/arXiv/URL')
+        if not ours:
+            errs.append('NEW: yes needs an "Ours:" line')
+    if new is False and new_only:
+        errs.append('NEW: no (nothing new, so nothing to referee)')
+    std, dev = field(text, 'Standard method'), field(text, 'Deviations')
+    if not std:
+        errs.append('needs a "Standard method:" line (normal first)')
+    if not dev or not (re.fullmatch(r'none\.?', dev, re.I) or re.search(r'standard failed', dev, re.I)):
+        errs.append('needs "Deviations: none" or each deviation with "standard failed: <where>"')
+    if METRIC.search(text):
+        b = d / 'BASELINES.json'
+        if not b.is_file():
+            errs.append('predictive metric found: needs BASELINES.json (trivial, simple, method, sbs) from tools/sbs/sbs.py')
+        else:
+            try:
+                rows = json.loads(b.read_text())
+                rows = rows if isinstance(rows, list) else [rows]
+                for r in rows:
+                    v = sbs(r['trivial'], r['simple'], r['method'], r.get('higher_is_better', True))
+                    if abs(v - float(r['sbs'])) > 1e-6:
+                        errs.append(f'BASELINES.json sbs {r["sbs"]} does not match recomputed {v:.6f}')
+            except (KeyError, ValueError, TypeError, json.JSONDecodeError) as e:
+                errs.append(f'BASELINES.json unreadable or incomplete: {e}')
+        if not re.search(r'\bSBS\b', text):
+            errs.append('predictive metric found: state the SBS in the claim text')
+    return errs
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('dirs', nargs='+')
+    p.add_argument('--new-only', action='store_true')
+    p.add_argument('-q', '--quiet', action='store_true')
+    a = p.parse_args(argv)
+    bad = 0
+    for d in a.dirs:
+        errs = lint(d, a.new_only)
+        bad += bool(errs)
+        if not a.quiet:
+            print(f'{"FAIL" if errs else "PASS"} {d}' + ''.join(f'\n  - {e}' for e in errs))
+    return 1 if bad else 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

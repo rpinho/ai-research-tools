@@ -1,10 +1,13 @@
 # Agent entry point
 
+**Please let's do normal things unless they don't work.** Standard method first; deviate only after it fails, and say where. Trivial predictor and simple baseline before any predictive claim. Every result answers one question: did you find something new, yes or no? [Normal first](docs/normal-first.md).
+
 Run bounded agents on open research problems and competitions.
 Keep ideas, frozen tests, evidence and delivery cadence in a local **lane**.
 Use independent sealed selection; this repo ships code and synthetic examples.
 Wake the conductor through scripts, never peer messages: [conductor inbox](docs/conductor-inbox.md).
 Lanes that go quiet get a scheduled resume prompt, not a reminder in prose: [lane nudge](docs/lane-nudge.md).
+Lanes that spend without finding anything new, or whose referee passes everything, fail a scheduled test and stop: [lane yield](docs/lane-yield.md).
 
 ## Set up and run
 
