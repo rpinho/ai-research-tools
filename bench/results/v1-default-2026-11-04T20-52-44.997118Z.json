@@ -1,0 +1,339 @@
+{
+  "backend": "codex",
+  "benchmark_version": "mock-1104-v1",
+  "cases": [
+    {
+      "case": "toy",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 0.1021,
+      "gate": "existing exact verifier (v1 receipt for both setups)",
+      "hidden_score_reason": "Exact arithmetic toy has no statistical hidden test.",
+      "hidden_test_score": null,
+      "local_validation_score": 1.0,
+      "metric": "exact_match",
+      "n_submissions": 1,
+      "receipt_verified": true,
+      "selected": "squares",
+      "statistical_holdout": false,
+      "status": "ok",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 0.241832333
+    },
+    {
+      "case": "concrete",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 1.2421660000000003,
+      "final_hidden_evaluations": 1,
+      "gate_accepted": true,
+      "gate_version": 1,
+      "hidden_score_kind": "frozen local mock holdout, not original Kaggle private score",
+      "hidden_test_score": 11.693874876583363,
+      "ledger_sha256": "4de9e5c3077f7f3546aa64319d270dbad76fe14393c19e6a0c51b98134509704",
+      "local_validation_score": 13.200487926591263,
+      "metric": "rmse",
+      "n_candidates": 3,
+      "n_submissions": 1,
+      "official_uploads": 0,
+      "prediction_sha256": "3e3877d08caa7a4e18c910fd4bada3fdc574e41463dae15cd17df834816aed47",
+      "predictions_frozen_sha256": "3e3877d08caa7a4e18c910fd4bada3fdc574e41463dae15cd17df834816aed47",
+      "receipt_sha256": "0f7d7ec75632a92498ae9aac923aa6d393098cdfbfc18293fb1370ef53f1753f",
+      "receipt_verified": true,
+      "selected": "hist_gradient_boosting",
+      "selection_decision": {
+        "accepted": true,
+        "best": "hist_gradient_boosting",
+        "finalists": [
+          {
+            "mean": -15.064496239295755,
+            "n_seeds": 2,
+            "name": "ridge",
+            "sd": 0.10940959910954785,
+            "sealed_scores": [
+              -15.141860508753018,
+              -14.987131969838492
+            ],
+            "sem": 0.07736426945726294
+          },
+          {
+            "mean": -12.621206238627941,
+            "n_seeds": 2,
+            "name": "extra_trees",
+            "sd": 0.1444704962890308,
+            "sealed_scores": [
+              -12.51905017102058,
+              -12.7233623062353
+            ],
+            "sem": 0.10215606760735962
+          },
+          {
+            "mean": -12.589480437372973,
+            "n_seeds": 2,
+            "name": "hist_gradient_boosting",
+            "sd": 0.30169530244863885,
+            "sealed_scores": [
+              -12.376149643159415,
+              -12.802811231586533
+            ],
+            "sem": 0.21333079421355894
+          }
+        ],
+        "floor": -16.619452739016694,
+        "lower_bound": -13.463346121284602,
+        "margin": 0.4266615884271179,
+        "margin_sd": 2.0,
+        "mean": -12.589480437372973,
+        "n_candidates": 3,
+        "n_finalists": 3,
+        "optimism": 0.4472040954845102,
+        "reason": "lower bound strictly exceeds floor",
+        "sd": 0.30169530244863885,
+        "search_optimism": 0.4472040954845102,
+        "selected": "hist_gradient_boosting",
+        "sem": 0.21333079421355894
+      },
+      "statistical_holdout": true,
+      "status": "ok",
+      "submission_sha256": "4543ca0f25d2fdc58613af1ccf0b7efb2aecdf19e1cf3c38d118d7733161555b",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 2.224238458
+    },
+    {
+      "case": "crab",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 1.0775209999999995,
+      "final_hidden_evaluations": 1,
+      "gate_accepted": true,
+      "gate_version": 1,
+      "hidden_score_kind": "frozen local mock holdout, not original Kaggle private score",
+      "hidden_test_score": 1.553402211027803,
+      "ledger_sha256": "dfdc9d14edfb54c5620dabbc3281d75085b231fc38d8f6d531271bc9a104fc02",
+      "local_validation_score": 1.58812876099738,
+      "metric": "mae",
+      "n_candidates": 3,
+      "n_submissions": 1,
+      "official_uploads": 0,
+      "prediction_sha256": "328cb4b80e99bc84ddf49667a120a66a7c91f22250159314b38f8689d7ccce96",
+      "predictions_frozen_sha256": "328cb4b80e99bc84ddf49667a120a66a7c91f22250159314b38f8689d7ccce96",
+      "receipt_sha256": "78b7a5b2ae2058c5c91842f730591058c1c00922ca759a5725119b939ba84483",
+      "receipt_verified": true,
+      "selected": "ridge",
+      "selection_decision": {
+        "accepted": true,
+        "best": "ridge",
+        "finalists": [
+          {
+            "mean": -1.6712926561089736,
+            "n_seeds": 2,
+            "name": "ridge",
+            "sd": 0.0053264402337631885,
+            "sealed_scores": [
+              -1.6750590181178524,
+              -1.6675262941000948
+            ],
+            "sem": 0.0037663620088788097
+          },
+          {
+            "mean": -1.7536832223149412,
+            "n_seeds": 2,
+            "name": "extra_trees",
+            "sd": 0.003048007594969068,
+            "sealed_scores": [
+              -1.7515279554754306,
+              -1.755838489154452
+            ],
+            "sem": 0.0021552668395107277
+          },
+          {
+            "mean": -1.694801482234038,
+            "n_seeds": 2,
+            "name": "hist_gradient_boosting",
+            "sd": 0.03071075732817357,
+            "sealed_scores": [
+              -1.7165172669961641,
+              -1.6730856974719122
+            ],
+            "sem": 0.02171578476212599
+          }
+        ],
+        "floor": -2.682030614368697,
+        "lower_bound": -1.686720782764954,
+        "margin": 0.007532724017757619,
+        "margin_sd": 2.0,
+        "mean": -1.6712926561089736,
+        "n_candidates": 3,
+        "n_finalists": 3,
+        "optimism": 0.00789540263822267,
+        "reason": "lower bound strictly exceeds floor",
+        "sd": 0.0053264402337631885,
+        "search_optimism": 0.00789540263822267,
+        "selected": "ridge",
+        "sem": 0.0037663620088788097
+      },
+      "statistical_holdout": true,
+      "status": "ok",
+      "submission_sha256": "7f8c4bad13948ef19134333742d7a7c8334a38cf295178b4295494f76b7411cc",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 1.1923220420000002
+    }
+  ],
+  "data_manifest_sha256": {
+    "concrete": "3ea2d600222184b8f86b42f17ab3950ac4891a7e92e05ef29f879295e46d3f06",
+    "crab": "3d1f8fcc0d0b45cdcf3e4461e0fc2009cdf463c257d4cfa7e40701e48d759674"
+  },
+  "environment": {
+    "cpu_count": 10,
+    "machine": "arm64",
+    "packages": {
+      "numpy": "2.0.2",
+      "scikit-learn": "1.6.1"
+    },
+    "python": "3.9.6",
+    "system": "Darwin"
+  },
+  "flags": [],
+  "freeze_sha256": "5d5d3ffea65a8372d2be55e8fe044029b09293645f635d83dbabcc06117c3b0c",
+  "model": "gpt-6.1-sol",
+  "notes": [
+    "One model invocation shared across cases; per-case tokens/dollars cannot be attributed.",
+    "Per-case wall time includes local fitting/selection; total also includes preparation/model time.",
+    "Final hidden scores are local mock holdouts, not Kaggle private leaderboard scores.",
+    "One run per setup is a regression observation; run-to-run noise is real."
+  ],
+  "partitions": {
+    "concrete": {
+      "dev": {
+        "groups": 331,
+        "ids_sha256": "e950d9f85372c92b3e0ec09d12242002e1abb9af8abaca0c12c19cc9d22b5419",
+        "rows": 510
+      },
+      "hidden": {
+        "groups": 225,
+        "ids_sha256": "2bc9c69724657815a96769b921d2966a092e520e7b8d21fefe1629cd2bef0242",
+        "rows": 477
+      },
+      "selection": {
+        "groups": 256,
+        "ids_sha256": "d6475af88ff9d2c53128003fc1d3eda49af09bc9bb3ed97e78c02963a9b342ca",
+        "rows": 487
+      },
+      "train": {
+        "groups": 788,
+        "ids_sha256": "d5ab6d81d6827d44cc28bcc6b258b1b1eb68bf1ce03e11a105cade7fe6d60e8d",
+        "rows": 1387
+      }
+    },
+    "crab": {
+      "dev": {
+        "groups": 304,
+        "ids_sha256": "f504c0cf2c54c04ea3d53c7997946806ecb8737bde8a92d02a648f0a5705ef9f",
+        "rows": 304
+      },
+      "hidden": {
+        "groups": 248,
+        "ids_sha256": "9798777225a8adfd8ddaab5e5d5e7787eb2bb3faa1dd06bc9d6b9333ce40b28a",
+        "rows": 248
+      },
+      "selection": {
+        "groups": 237,
+        "ids_sha256": "2c8dc88ae254884dcbd1475e4ba1ce0367e45f624276887946bf5cbb61b2013b",
+        "rows": 237
+      },
+      "train": {
+        "groups": 811,
+        "ids_sha256": "7b68262bf0e95450bebb142026d91c012e909434b22ecb29f569d06bd6c9a6da",
+        "rows": 811
+      }
+    }
+  },
+  "plan": {
+    "recipes": {
+      "concrete": [
+        {
+          "family": "ridge",
+          "strength": "small"
+        },
+        {
+          "family": "extra_trees",
+          "strength": "medium"
+        },
+        {
+          "family": "hist_gradient_boosting",
+          "strength": "medium"
+        }
+      ],
+      "crab": [
+        {
+          "family": "ridge",
+          "strength": "small"
+        },
+        {
+          "family": "extra_trees",
+          "strength": "medium"
+        },
+        {
+          "family": "hist_gradient_boosting",
+          "strength": "medium"
+        }
+      ]
+    },
+    "sequence": [
+      0,
+      1,
+      4,
+      9,
+      16,
+      25,
+      36,
+      49,
+      64,
+      81
+    ]
+  },
+  "plan_sha256": "1d243c870c43d76ad60993a8ce1637d28962aa5eff6bf4818026a62df89471b9",
+  "recovery": {
+    "freeze_sha256": "984b0cad45230dc9bdd0565e81c382aea0553e2ca70c19ea5860f93a24909e6d",
+    "local_wall_time_seconds": 3.666440417,
+    "new_model_requests": 0,
+    "original_started_utc": "2026-11-04T20-50-02.996297Z",
+    "original_wall_time_seconds": 6.747308875000001,
+    "reason": "ValueError: model used a tool; scorecard refused",
+    "result_sha256": "b450ebff3ac279120193603e37ef39c60e68de3dbebf665059a2066c77094514",
+    "timing_note": "Wall time sums original execution and local recovery; intervening development time is excluded."
+  },
+  "schema_version": 1,
+  "setup": "v1-default",
+  "shared_model_wall_time_reason": "Original response timing was not separately captured; original total is in recovery metadata.",
+  "shared_model_wall_time_seconds": null,
+  "source_hashes": {
+    "bench/__init__.py": "188a94ea0e9dfb0b2cf9161768972e2eb9ec17525a58e090ecd49289e2519857",
+    "bench/cases.py": "ecf90e1e3357fae158eb9f21827cfcd489d755083ad42391b04667479df71c32",
+    "bench/run.py": "60ed0a0b84f9694d57e83bdd8882b844aa9548d52be00e46b98a0ed36bef4684",
+    "bench/selector.py": "d829713a2c723251a181c62b02313eeeaab37fb57eae832521e9f488327cf744",
+    "bench/setup_data.py": "888925204bec05df53d3befa246ab03a4e4014336c428efc33bdaa80d8b667f2",
+    "bench/test_bench.py": "7a2fe778de061e0074667add90dab547f855f4d8003fb49bc50dbf002c9d5c2c",
+    "bench/worker.py": "fa3ea95dbbc708ea8c926dc5688cfb297fa87a62205e94830a4cb151d07d9514",
+    "examples/toy_demo.py": "db9cfd0fe5b7232c3d43e932f9324f1f65c82f4b114badb55db8567ef5c27680",
+    "harness/agent_executor.py": "87be4d5152b1f7558b256b97aa401d154fada0450328c5cc520e8009b7ed2fc9",
+    "harness/sweep.py": "2d93d7cd0433aab4879a6e46fcbb075e415fea2842ed9692232bd07bf22c6515",
+    "selection/selection_gate/__init__.py": "89372e4d8fa329a25efc47f842f5b45da315d9d6b479af8c1eb0e3074d773d54",
+    "selection/selection_gate/policy.py": "451e75bf4d71118ec94a922c1f7e724a9cca5aa62cc2cb3fcb3403ac63f4d98b",
+    "selection/selection_gate/v2.py": "c1ff327f31beee46da0e4283da5349366741cb0aca567ef17f140dd393d979d8"
+  },
+  "started_utc": "2026-11-04T20-52-44.997118Z",
+  "status": "ok",
+  "usage": {
+    "log_sha256": "681676f4531da87b60a869a417d726cc403be0d1984eb40383d6fb888f363b7e",
+    "source": "Codex turn.completed usage",
+    "tokens": {
+      "cached_input_tokens": 0,
+      "input_tokens": 11851,
+      "output_tokens": 147
+    },
+    "usd": null,
+    "usd_reason": "Codex CLI usage events do not report billed dollars; no inferred price."
+  },
+  "wall_time_seconds": 10.413749292
+}

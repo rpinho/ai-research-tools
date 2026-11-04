@@ -1,0 +1,554 @@
+{
+  "backend": "codex",
+  "benchmark_version": "mock-1104-v1",
+  "cases": [
+    {
+      "case": "toy",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 0.13601600000000003,
+      "gate": "existing exact verifier (v1 receipt for both setups)",
+      "hidden_score_reason": "Exact arithmetic toy has no statistical hidden test.",
+      "hidden_test_score": null,
+      "local_validation_score": 1.0,
+      "metric": "exact_match",
+      "n_submissions": 1,
+      "receipt_verified": true,
+      "selected": "squares",
+      "statistical_holdout": false,
+      "status": "ok",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 0.21932370800000012
+    },
+    {
+      "case": "concrete",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 1.2762519999999997,
+      "final_hidden_evaluations": 1,
+      "gate_accepted": true,
+      "gate_version": 2,
+      "hidden_score_kind": "frozen local mock holdout, not original Kaggle private score",
+      "hidden_test_score": 11.690112708671679,
+      "ledger_sha256": "3d701dd63320c5ad0ef57206a788743397c664b80a95a431994793250dd3d123",
+      "local_validation_score": 13.123218848328829,
+      "metric": "rmse",
+      "n_candidates": 3,
+      "n_submissions": 1,
+      "official_uploads": 0,
+      "prediction_sha256": "14373274bb475f1471006f3bf80d226ddffd767e5fc677dc726104649cbd8626",
+      "predictions_frozen_sha256": "14373274bb475f1471006f3bf80d226ddffd767e5fc677dc726104649cbd8626",
+      "receipt_sha256": "1048a26b6e32c49b492a664648271f8fad50cfc909e5b4874596faaca48a8863",
+      "receipt_verified": true,
+      "selected": "extra_trees",
+      "selection_decision": {
+        "accepted": true,
+        "best": "hist_gradient_boosting",
+        "competition": "concrete",
+        "expected": -13.036684532857484,
+        "finalists": [
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                1.5198455589131132,
+                2.0637843047970055
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -16.708978633406634,
+              "worst_difference": 1.5198455589131132,
+              "worst_score": -15.18913307449352,
+              "worst_split": 0,
+              "worst_split_id": "backtest-1"
+            },
+            "bootstrap": {
+              "ci_high": 65.69387313996245,
+              "ci_low": 23.815789438043424,
+              "confidence": 0.95,
+              "difference": 44.887503597695684,
+              "n_resamples": 2000,
+              "n_units": 256
+            },
+            "expected": -15.22667450461839,
+            "lower_bound": -15.381403043532917,
+            "margin": 0.15472853891452587,
+            "mean": -15.064496239295755,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "ridge",
+            "optimism": 0.16217826532263585,
+            "optimism_drop": -0.6640204882145362,
+            "sd": 0.10940959910954785,
+            "sealed_scores": [
+              -15.141860508753018,
+              -14.987131969838492
+            ],
+            "search_optimism": 0.16217826532263585,
+            "sem": 0.07736426945726294,
+            "submission_score": -15.21613020743199,
+            "tuned_score": -15.728516727510291
+          },
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                3.559123280016143,
+                4.55108235079595
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -16.708978633406634,
+              "worst_difference": 3.559123280016143,
+              "worst_score": -13.14985535339049,
+              "worst_split": 0,
+              "worst_split_id": "backtest-1"
+            },
+            "bootstrap": {
+              "ci_high": 151.62918792952428,
+              "ci_low": 91.26307755440467,
+              "confidence": 0.95,
+              "difference": 121.5930260749285,
+              "n_resamples": 2000,
+              "n_units": 256
+            },
+            "expected": -12.835355405329446,
+            "lower_bound": -13.039667540544166,
+            "margin": 0.20431213521471925,
+            "mean": -12.621206238627941,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "extra_trees",
+            "optimism": 0.21414916670150427,
+            "optimism_drop": -0.5020126097008877,
+            "sd": 0.1444704962890308,
+            "sealed_scores": [
+              -12.51905017102058,
+              -12.7233623062353
+            ],
+            "search_optimism": 0.21414916670150427,
+            "sem": 0.10215606760735962,
+            "submission_score": -12.821432131138366,
+            "tuned_score": -13.123218848328829
+          },
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                3.1994812192611075,
+                4.3642451466254695
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -16.708978633406634,
+              "worst_difference": 3.1994812192611075,
+              "worst_score": -13.509497414145526,
+              "worst_split": 0,
+              "worst_split_id": "backtest-1"
+            },
+            "bootstrap": {
+              "ci_high": 153.06168187637613,
+              "ci_low": 90.85948105012827,
+              "confidence": 0.95,
+              "difference": 121.63449733898939,
+              "n_resamples": 2000,
+              "n_units": 256
+            },
+            "expected": -13.036684532857484,
+            "lower_bound": -13.463346121284602,
+            "margin": 0.4266615884271179,
+            "mean": -12.589480437372973,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "hist_gradient_boosting",
+            "optimism": 0.4472040954845102,
+            "optimism_drop": -0.6110074892182897,
+            "sd": 0.30169530244863885,
+            "sealed_scores": [
+              -12.376149643159415,
+              -12.802811231586533
+            ],
+            "search_optimism": 0.4472040954845102,
+            "sem": 0.21333079421355894,
+            "submission_score": -13.00760879403155,
+            "tuned_score": -13.200487926591263
+          }
+        ],
+        "floor": -16.619452739016694,
+        "margin_sd": 2.0,
+        "measurement_waiver": {
+          "reason": "Cheap regression smoke check: two fresh bootstrap-fit seeds, not ten; no scientific improvement or independence of source subjects claimed."
+        },
+        "n_candidates": 3,
+        "n_finalists": 3,
+        "n_trials_total": 3,
+        "optimism_estimate": -0.5923468623779046,
+        "optimism_ledger_sha256": "7bef9e3792605539621ea9c5f8a02878eea9d560f31e0ece2160533d749cbfd6",
+        "optimism_prior": 0.0,
+        "optimism_prior_sha256": "",
+        "policy_version": 2,
+        "reason": "lower bound, positive unit-bootstrap CI and majority backtests required",
+        "scoring_id": "v2-selection/concrete",
+        "scoring_ledger_sha256": "3d701dd63320c5ad0ef57206a788743397c664b80a95a431994793250dd3d123",
+        "search_optimism": 0.4472040954845102,
+        "selected": "extra_trees",
+        "selected_submissions": [
+          "extra_trees"
+        ],
+        "submissions": 1
+      },
+      "statistical_holdout": true,
+      "status": "ok",
+      "submission_sha256": "fc9ca9b5912a9db9758437fe91fa3573804f96f7e6fa9683a19e5a5c78fdadf1",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 1.5707850419999998
+    },
+    {
+      "case": "crab",
+      "cost_reason": "One shared backend invocation; exact per-case allocation is unavailable.",
+      "cpu_time_seconds": 1.1447370000000001,
+      "final_hidden_evaluations": 1,
+      "gate_accepted": true,
+      "gate_version": 2,
+      "hidden_score_kind": "frozen local mock holdout, not original Kaggle private score",
+      "hidden_test_score": 1.553402211027803,
+      "ledger_sha256": "0ff0caad869e0bc36f37c8a3cb40e658edbd8f1da227336783d506ad4a86d1ab",
+      "local_validation_score": 1.58812876099738,
+      "metric": "mae",
+      "n_candidates": 3,
+      "n_submissions": 1,
+      "official_uploads": 0,
+      "prediction_sha256": "5a16fcd8f209d2f10bb57cd09eced20c0eef5b189854f6a46cdb24d61eda069e",
+      "predictions_frozen_sha256": "5a16fcd8f209d2f10bb57cd09eced20c0eef5b189854f6a46cdb24d61eda069e",
+      "receipt_sha256": "8cf9486ab4b99dce84ec3d478a3b69c590713dded918ecbf18622244900404ef",
+      "receipt_verified": true,
+      "selected": "ridge",
+      "selection_decision": {
+        "accepted": true,
+        "best": "ridge",
+        "competition": "crab",
+        "expected": -1.6791880587471963,
+        "finalists": [
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                0.7663212057403672,
+                0.5797097933747928
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -2.1890813842274586,
+              "worst_difference": 0.5797097933747928,
+              "worst_score": -1.6093715908526658,
+              "worst_split": 1,
+              "worst_split_id": "backtest-2"
+            },
+            "bootstrap": {
+              "ci_high": 1.2516138097594502,
+              "ci_low": 0.7891430898470563,
+              "confidence": 0.95,
+              "difference": 1.0107379582597233,
+              "n_resamples": 2000,
+              "n_units": 237
+            },
+            "expected": -1.6791880587471963,
+            "lower_bound": -1.686720782764954,
+            "margin": 0.007532724017757619,
+            "mean": -1.6712926561089736,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "ridge",
+            "optimism": 0.00789540263822267,
+            "optimism_drop": 0.08316389511159361,
+            "sd": 0.0053264402337631885,
+            "sealed_scores": [
+              -1.6750590181178524,
+              -1.6675262941000948
+            ],
+            "search_optimism": 0.00789540263822267,
+            "sem": 0.0037663620088788097,
+            "submission_score": -1.678674725646376,
+            "tuned_score": -1.58812876099738
+          },
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                0.7620594039819073,
+                0.5676468338809721
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -2.1890813842274586,
+              "worst_difference": 0.5676468338809721,
+              "worst_score": -1.6214345503464864,
+              "worst_split": 1,
+              "worst_split_id": "backtest-2"
+            },
+            "bootstrap": {
+              "ci_high": 1.1573361317484248,
+              "ci_low": 0.731987363555029,
+              "confidence": 0.95,
+              "difference": 0.9283473920537556,
+              "n_resamples": 2000,
+              "n_units": 237
+            },
+            "expected": -1.758201295577849,
+            "lower_bound": -1.7625118292568704,
+            "margin": 0.0043105336790214555,
+            "mean": -1.7536832223149412,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "extra_trees",
+            "optimism": 0.004518073262907741,
+            "optimism_drop": 0.2341034228562735,
+            "sd": 0.003048007594969068,
+            "sealed_scores": [
+              -1.7515279554754306,
+              -1.755838489154452
+            ],
+            "search_optimism": 0.004518073262907741,
+            "sem": 0.0021552668395107277,
+            "submission_score": -1.7579075453203823,
+            "tuned_score": -1.5195797994586677
+          },
+          {
+            "accepted": true,
+            "backtests": {
+              "differences": [
+                0.7695897343415581,
+                0.5209224839283353
+              ],
+              "margin": 0.0,
+              "n_splits": 2,
+              "passed": true,
+              "wins": 2,
+              "worst_baseline": -2.1890813842274586,
+              "worst_difference": 0.5209224839283353,
+              "worst_score": -1.6681589002991233,
+              "worst_split": 1,
+              "worst_split_id": "backtest-2"
+            },
+            "bootstrap": {
+              "ci_high": 1.2187144591484138,
+              "ci_low": 0.7768921537849478,
+              "confidence": 0.95,
+              "difference": 0.9872291321346585,
+              "n_resamples": 2000,
+              "n_units": 237
+            },
+            "expected": -1.7403241547487294,
+            "lower_bound": -1.7837557242729813,
+            "margin": 0.04343156952425198,
+            "mean": -1.694801482234038,
+            "measurement_kind": "seeds",
+            "n_measurements": 2,
+            "n_seeds": 2,
+            "name": "hist_gradient_boosting",
+            "optimism": 0.04552267251469138,
+            "optimism_drop": 0.0872946608300218,
+            "sd": 0.03071075732817357,
+            "sealed_scores": [
+              -1.7165172669961641,
+              -1.6730856974719122
+            ],
+            "search_optimism": 0.04552267251469138,
+            "sem": 0.02171578476212599,
+            "submission_score": -1.737364420367805,
+            "tuned_score": -1.6075068214040162
+          }
+        ],
+        "floor": -2.682030614368697,
+        "margin_sd": 2.0,
+        "measurement_waiver": {
+          "reason": "Cheap regression smoke check: two fresh bootstrap-fit seeds, not ten; no scientific improvement or independence of source subjects claimed."
+        },
+        "n_candidates": 3,
+        "n_finalists": 3,
+        "n_trials_total": 3,
+        "optimism_estimate": 0.13485399293262965,
+        "optimism_ledger_sha256": "8cab2b0fa3f21a4df9e5f0b4f40cd8abe0f1ef8d832bf388db44f29232ca235d",
+        "optimism_prior": 0.0,
+        "optimism_prior_sha256": "",
+        "policy_version": 2,
+        "reason": "lower bound, positive unit-bootstrap CI and majority backtests required",
+        "scoring_id": "v2-selection/crab",
+        "scoring_ledger_sha256": "0ff0caad869e0bc36f37c8a3cb40e658edbd8f1da227336783d506ad4a86d1ab",
+        "search_optimism": 0.00789540263822267,
+        "selected": "ridge",
+        "selected_submissions": [
+          "ridge"
+        ],
+        "submissions": 1
+      },
+      "statistical_holdout": true,
+      "status": "ok",
+      "submission_sha256": "7f8c4bad13948ef19134333742d7a7c8334a38cf295178b4295494f76b7411cc",
+      "tokens": null,
+      "usd": null,
+      "wall_time_seconds": 1.2078724170000008
+    }
+  ],
+  "data_manifest_sha256": {
+    "concrete": "3ea2d600222184b8f86b42f17ab3950ac4891a7e92e05ef29f879295e46d3f06",
+    "crab": "3d1f8fcc0d0b45cdcf3e4461e0fc2009cdf463c257d4cfa7e40701e48d759674"
+  },
+  "environment": {
+    "cpu_count": 10,
+    "machine": "arm64",
+    "packages": {
+      "numpy": "2.0.2",
+      "scikit-learn": "1.6.1"
+    },
+    "python": "3.9.6",
+    "system": "Darwin"
+  },
+  "flags": [],
+  "freeze_sha256": "bb3de3b54cc56f4e5981ff587663dcc858a2f89934eead184c078ca7c4632644",
+  "model": "gpt-6.1-sol",
+  "notes": [
+    "One model invocation shared across cases; per-case tokens/dollars cannot be attributed.",
+    "Per-case wall time includes local fitting/selection; total also includes preparation/model time.",
+    "Final hidden scores are local mock holdouts, not Kaggle private leaderboard scores.",
+    "One run per setup is a regression observation; run-to-run noise is real."
+  ],
+  "partitions": {
+    "concrete": {
+      "dev": {
+        "groups": 331,
+        "ids_sha256": "e950d9f85372c92b3e0ec09d12242002e1abb9af8abaca0c12c19cc9d22b5419",
+        "rows": 510
+      },
+      "hidden": {
+        "groups": 225,
+        "ids_sha256": "2bc9c69724657815a96769b921d2966a092e520e7b8d21fefe1629cd2bef0242",
+        "rows": 477
+      },
+      "selection": {
+        "groups": 256,
+        "ids_sha256": "d6475af88ff9d2c53128003fc1d3eda49af09bc9bb3ed97e78c02963a9b342ca",
+        "rows": 487
+      },
+      "train": {
+        "groups": 788,
+        "ids_sha256": "d5ab6d81d6827d44cc28bcc6b258b1b1eb68bf1ce03e11a105cade7fe6d60e8d",
+        "rows": 1387
+      }
+    },
+    "crab": {
+      "dev": {
+        "groups": 304,
+        "ids_sha256": "f504c0cf2c54c04ea3d53c7997946806ecb8737bde8a92d02a648f0a5705ef9f",
+        "rows": 304
+      },
+      "hidden": {
+        "groups": 248,
+        "ids_sha256": "9798777225a8adfd8ddaab5e5d5e7787eb2bb3faa1dd06bc9d6b9333ce40b28a",
+        "rows": 248
+      },
+      "selection": {
+        "groups": 237,
+        "ids_sha256": "2c8dc88ae254884dcbd1475e4ba1ce0367e45f624276887946bf5cbb61b2013b",
+        "rows": 237
+      },
+      "train": {
+        "groups": 811,
+        "ids_sha256": "7b68262bf0e95450bebb142026d91c012e909434b22ecb29f569d06bd6c9a6da",
+        "rows": 811
+      }
+    }
+  },
+  "plan": {
+    "recipes": {
+      "concrete": [
+        {
+          "family": "ridge",
+          "strength": "small"
+        },
+        {
+          "family": "extra_trees",
+          "strength": "medium"
+        },
+        {
+          "family": "hist_gradient_boosting",
+          "strength": "medium"
+        }
+      ],
+      "crab": [
+        {
+          "family": "ridge",
+          "strength": "small"
+        },
+        {
+          "family": "extra_trees",
+          "strength": "medium"
+        },
+        {
+          "family": "hist_gradient_boosting",
+          "strength": "medium"
+        }
+      ]
+    },
+    "sequence": [
+      0,
+      1,
+      4,
+      9,
+      16,
+      25,
+      36,
+      49,
+      64,
+      81
+    ]
+  },
+  "plan_sha256": "1d243c870c43d76ad60993a8ce1637d28962aa5eff6bf4818026a62df89471b9",
+  "schema_version": 1,
+  "setup": "v2-selection",
+  "shared_model_wall_time_seconds": 5.886,
+  "source_hashes": {
+    "bench/__init__.py": "188a94ea0e9dfb0b2cf9161768972e2eb9ec17525a58e090ecd49289e2519857",
+    "bench/cases.py": "ecf90e1e3357fae158eb9f21827cfcd489d755083ad42391b04667479df71c32",
+    "bench/run.py": "60ed0a0b84f9694d57e83bdd8882b844aa9548d52be00e46b98a0ed36bef4684",
+    "bench/selector.py": "d829713a2c723251a181c62b02313eeeaab37fb57eae832521e9f488327cf744",
+    "bench/setup_data.py": "888925204bec05df53d3befa246ab03a4e4014336c428efc33bdaa80d8b667f2",
+    "bench/test_bench.py": "7a2fe778de061e0074667add90dab547f855f4d8003fb49bc50dbf002c9d5c2c",
+    "bench/worker.py": "fa3ea95dbbc708ea8c926dc5688cfb297fa87a62205e94830a4cb151d07d9514",
+    "examples/toy_demo.py": "db9cfd0fe5b7232c3d43e932f9324f1f65c82f4b114badb55db8567ef5c27680",
+    "harness/agent_executor.py": "87be4d5152b1f7558b256b97aa401d154fada0450328c5cc520e8009b7ed2fc9",
+    "harness/sweep.py": "2d93d7cd0433aab4879a6e46fcbb075e415fea2842ed9692232bd07bf22c6515",
+    "selection/selection_gate/__init__.py": "89372e4d8fa329a25efc47f842f5b45da315d9d6b479af8c1eb0e3074d773d54",
+    "selection/selection_gate/policy.py": "451e75bf4d71118ec94a922c1f7e724a9cca5aa62cc2cb3fcb3403ac63f4d98b",
+    "selection/selection_gate/v2.py": "c1ff327f31beee46da0e4283da5349366741cb0aca567ef17f140dd393d979d8"
+  },
+  "started_utc": "2026-11-04T20-53-09.946162Z",
+  "status": "ok",
+  "usage": {
+    "log_sha256": "5d92c9ffe94c62644e60978e7ca5307a19631ccf8ed81ec14c56de952b1dbf84",
+    "source": "Codex turn.completed usage",
+    "tokens": {
+      "cached_input_tokens": 0,
+      "input_tokens": 11857,
+      "output_tokens": 106
+    },
+    "usd": null,
+    "usd_reason": "Codex CLI usage events do not report billed dollars; no inferred price."
+  },
+  "wall_time_seconds": 8.893686708
+}

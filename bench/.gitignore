@@ -1,0 +1,3 @@
+.runtime/
+data/
+!results/*.json
