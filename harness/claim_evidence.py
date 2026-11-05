@@ -150,28 +150,35 @@ def findings(claims, patterns, incident=None, require=False):
                             'separate model must rebuild it from the public inputs with its own '
                             'code'.format(name))
             continue
-        matched = [entry for entry in found if value_in(entry[0], RERUN, MATCHED)]
-        if not matched:
-            failures.append('RECHECK_FAILED claim {}: the independent re-run did not reproduce '
+        # The NEWEST re-check decides. Once a lane has several re-check roots, taking any
+        # passing row would let a stale pass override a later drop, and a gate that can be
+        # satisfied by the most favourable row ever written is the 98%-pass referee again.
+        row, when, basis = max(enumerate(found), key=lambda e: (e[1][1], e[0]))[1]
+        if not value_in(row, RERUN, MATCHED):
+            failures.append('RECHECK_FAILED claim {}: the newest independent re-run did not '
+                            'reproduce it ({}={})'.format(
+                                name, RERUN, (row.get(RERUN) or 'blank').strip()))
+            continue
+        if not value_in(row, VERDICT, SURVIVED):
+            failures.append('RECHECK_DROPPED claim {}: the newest independent re-check dropped '
                             'it ({}={})'.format(
-                name, RERUN, ', '.join(sorted({(e[0].get(RERUN) or 'blank').strip() for e in found}))))
+                                name, VERDICT, (row.get(VERDICT) or 'blank').strip()))
             continue
-        survived = [entry for entry in matched if value_in(entry[0], VERDICT, SURVIVED)]
-        if not survived:
-            failures.append('RECHECK_DROPPED claim {}: the independent re-check dropped it '
-                            '({}={})'.format(
-                name, VERDICT, ', '.join(sorted({(e[0].get(VERDICT) or 'blank').strip() for e in matched}))))
-            continue
+        disagree = [entry for entry in found if entry[0] is not row
+                    and not (value_in(entry[0], RERUN, MATCHED)
+                             and value_in(entry[0], VERDICT, SURVIVED))]
+        if disagree:
+            warnings.append('RECHECK_DISAGREES claim {}: {} earlier re-check(s) did not keep it, '
+                            'and the newest one ({} by {}) is what passes it'.format(
+                                name, len(disagree), when.isoformat(), basis))
         markers = pod_markers(claim)
         if markers and cutoff:
-            after = [entry for entry in survived if entry[1] > cutoff]
-            if not after:
-                newest = max(survived, key=lambda entry: entry[1])
+            if when <= cutoff:
                 failures.append(
                     'POD_EVIDENCE_STALE claim {}: evidence was produced on a pod ({}) and its '
-                    're-check is dated '
-                    '{} by {}, before the host incident at {}; re-run it somewhere trusted'.format(
-                        name, markers[0], newest[1].isoformat(), newest[2], cutoff.isoformat()))
+                    'newest re-check is dated {} by {}, before the host incident at {}; re-run '
+                    'it somewhere trusted'.format(
+                        name, markers[0], when.isoformat(), basis, cutoff.isoformat()))
         elif markers and not cutoff:
             warnings.append('POD_EVIDENCE_UNDATED claim {}: evidence was produced on a pod '
                             '({}); no host incident is configured, so nothing checks when it was '

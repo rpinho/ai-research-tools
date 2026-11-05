@@ -181,3 +181,38 @@ def test_pod_markers_are_found_by_name_and_tolerate_an_unreadable_claim(tmp_path
     (one / 'deploy.py').write_text('print(1)\n')
     assert ce.pod_markers(one) == ['pod-inputs.json']
     assert ce.pod_markers(tmp_path / 'claims' / 'gone') == []
+
+
+def test_the_newest_recheck_decides_and_an_overridden_drop_is_said_out_loud(tmp_path):
+    """A gate satisfied by the most favourable row ever written is the 98%-pass referee again.
+
+    With several re-check roots in play (the friends lane had three by 11-05 evening), an older
+    SURVIVES must not override a later DROP. The reverse is legitimate -- a claim restated and
+    re-checked does supersede an earlier drop -- but it is worth saying out loud.
+    """
+    one = claim(tmp_path, 'alpha_A015')
+    ledger(tmp_path, [row('alpha_A015')], root='recheck_old', when=BEFORE)
+    ledger(tmp_path, [row('alpha_A015', verdict='DROP')], root='recheck_new', when=AFTER)
+    roots = [str(tmp_path / 'recheck_*')]
+    failures, _ = ce.findings([one], roots, INCIDENT)
+    assert len(failures) == 1 and failures[0].startswith('RECHECK_DROPPED')
+    assert 'newest independent re-check dropped it' in failures[0]
+    # The other way round: the newest keeps it, and the earlier drop is reported as a warning.
+    ledger(tmp_path, [row('alpha_A015', verdict='DROP')], root='recheck_old', when=BEFORE)
+    ledger(tmp_path, [row('alpha_A015')], root='recheck_new', when=AFTER)
+    failures, warnings = ce.findings([one], roots, INCIDENT)
+    assert failures == []
+    assert len(warnings) == 1 and warnings[0].startswith('RECHECK_DISAGREES claim alpha_A015: 1')
+
+
+def test_a_stale_pass_cannot_answer_for_pod_evidence_either(tmp_path):
+    """The pod gate reads the newest re-check's date, not the most convenient one."""
+    one = claim(tmp_path, 'alpha_A016', pod=True)
+    ledger(tmp_path, [row('alpha_A016')], root='recheck_a', when=AFTER)
+    ledger(tmp_path, [row('alpha_A016')], root='recheck_b',
+           when=dt.datetime(2026, 11, 5, 23, tzinfo=dt.timezone.utc))
+    assert ce.findings([one], [str(tmp_path / 'recheck_*')], INCIDENT) == ([], [])
+    ledger(tmp_path, [row('alpha_A016')], root='recheck_b', when=BEFORE)
+    ledger(tmp_path, [row('alpha_A016')], root='recheck_a', when=BEFORE)
+    failures, _ = ce.findings([one], [str(tmp_path / 'recheck_*')], INCIDENT)
+    assert len(failures) == 1 and failures[0].startswith('POD_EVIDENCE_STALE')
