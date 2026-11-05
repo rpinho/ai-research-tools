@@ -14,6 +14,8 @@ For each configured lane, over a rolling window (default 48 h) it computes:
   verdicts    referee verdicts written in the window, and the share that pass
 and FAILS the lane when
   BURNING        job_hours >= max_job_hours_without_new and new_yes == 0
+  DRY_ROUNDS     attempts >= max_attempts_without_new and new_yes == 0 (a lane logging round after round
+                 of the same approach with nothing to show; set max_attempts_without_new to enable)
   RUBBER_STAMP   verdicts >= min_verdicts and pass share >= max_pass_share (a referee that passes everything
                  is not refereeing)
   UNSURFACED     (lanes with `surface_audit`) a claim with a HOLDS verdict, at any time, whose id is in no
@@ -36,7 +38,8 @@ sys.path.insert(0, str(LINT))
 sys.path.insert(0, str(LINT.parent / 'sbs'))
 from result_lint import lint  # noqa: E402
 
-DEFAULTS = dict(window_hours=48, max_job_hours_without_new=20, min_verdicts=20, max_pass_share=0.9)
+DEFAULTS = dict(window_hours=48, max_job_hours_without_new=20, min_verdicts=20, max_pass_share=0.9,
+                max_attempts_without_new=0)
 STAMP = re.compile(r'^(?:=== (?:run|attempt) .*?|exit \S+ )([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d:\d\d) \S+ (\d{4})\s*$')
 
 
@@ -113,6 +116,7 @@ def check_lane(name, cfg, now):
             passes += ok
             if ok and not lint(d, new_only=True):
                 new_yes += 1
+    attempts = 0
     for g in c.get('results', []):
         for p in glob.glob(os.path.expanduser(g)):
             try:
@@ -124,12 +128,18 @@ def check_lane(name, cfg, now):
                     t = datetime.fromisoformat(str(r['utc']).replace('Z', '+00:00')).timestamp()
                 except (KeyError, ValueError):
                     continue
-                if start <= t <= end and r.get('new') is True and str(r.get('referee', '')).upper().startswith('HOLDS'):
+                if not (start <= t <= end):
+                    continue
+                attempts += 1
+                if r.get('new') is True and str(r.get('referee', '')).upper().startswith('HOLDS'):
                     new_yes += 1
     share = passes / verdicts if verdicts else 0.0
     fails = []
     if hours >= c['max_job_hours_without_new'] and new_yes == 0:
         fails.append(f'BURNING: {hours:.0f} job-hours in {c["window_hours"]} h and nothing new (0 refereed NEW: yes claims)')
+    if c['max_attempts_without_new'] and attempts >= c['max_attempts_without_new'] and new_yes == 0:
+        fails.append(f'DRY_ROUNDS: {attempts} logged attempts in {c["window_hours"]} h and nothing new. '
+                     'Repeating an approach that is not working is activity, not progress: change the approach.')
     if verdicts >= c['min_verdicts'] and share >= c['max_pass_share']:
         fails.append(f'RUBBER_STAMP: referee passed {passes}/{verdicts} ({share:.0%}); a referee that passes everything is not refereeing')
     missing = unsurfaced(c['surface_audit']) if c.get('surface_audit') else {}
@@ -138,7 +148,7 @@ def check_lane(name, cfg, now):
         per = ', '.join(f'{k} {len(v)}' for k, v in sorted(missing.items(), key=lambda kv: -len(kv[1])))
         fails.append(f'UNSURFACED: {n} HOLDS claims of {len(missing)} friends never audited ({per})')
     return dict(lane=name, as_of=datetime.fromtimestamp(now).isoformat(timespec='minutes'), job_hours=round(hours, 1),
-                new_yes=new_yes, verdicts=verdicts, pass_share=round(share, 3), status='FAIL' if fails else 'PASS', fails=fails)
+                attempts=attempts, new_yes=new_yes, verdicts=verdicts, pass_share=round(share, 3), status='FAIL' if fails else 'PASS', fails=fails)
 
 
 def act(row, cfg):

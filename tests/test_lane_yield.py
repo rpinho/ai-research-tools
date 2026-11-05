@@ -85,3 +85,23 @@ def test_unsurfaced_holds_claims_fail_for_any_friend_without_a_hold_file(tmp_pat
     (tmp_path / 'surface_b').mkdir()
     (tmp_path / 'surface_b/surface_alpha.csv').write_text('id,friend,new\nbruno_B6,alpha,no\n')
     assert ly.check_lane('f', cfg, now)['status'] == 'PASS'
+
+
+def test_dry_rounds_fail_when_a_lane_repeats_an_approach_with_no_win(tmp_path):
+    # 11-05: c5 ran 17 rounds against a known wall with no portfolio improvement.
+    # It produces no launcher logs, so job_hours is 0 and BURNING can never fire.
+    now = time.time()
+    ledger = tmp_path / 'RESULTS.jsonl'
+    cfg = {'logs': [], 'results': [str(ledger)], 'max_attempts_without_new': 6}
+    utc = lambda ago: ly.datetime.fromtimestamp(now - ago).astimezone().isoformat()
+    ledger.write_text(''.join(json.dumps({'utc': utc(600 * i), 'new': False, 'kind': 'rerun',
+                                          'what': f'round {i}', 'referee': 'NONE'}) + '\n' for i in range(8)))
+    r = ly.check_lane('c5', cfg, now)
+    assert r['attempts'] == 8 and r['status'] == 'FAIL'
+    assert any(f.startswith('DRY_ROUNDS') for f in r['fails'])
+    # one real improvement clears it
+    with open(ledger, 'a') as f:
+        f.write(json.dumps({'utc': utc(300), 'new': True, 'kind': 'value', 'referee': 'HOLDS'}) + '\n')
+    assert ly.check_lane('c5', cfg, now)['status'] == 'PASS'
+    # off by default: a lane that never set the cap is not failed by attempts alone
+    assert ly.check_lane('c5', {'logs': [], 'results': [str(ledger)]}, now)['status'] == 'PASS'
