@@ -103,7 +103,13 @@ evidence_root = "."
 evidence_globs = ["reports/*-verified.md"]
 owner_session = "lane-agent"
 ''')
-    (lane / 'RULES.md').write_text('''# Lane rules
+    # The rules every lane gets come from harness/LANE_RULES_COMMON.md, never from a copy here;
+    # `lane-rules-sync` refreshes them in existing lanes. A new lane starts with the same block.
+    try:
+        common = (Path(__file__).resolve().parent / 'LANE_RULES_COMMON.md').read_text().strip() + '\n\n'
+    except OSError:
+        common = ''
+    (lane / 'RULES.md').write_text(common + '''# Lane rules
 
 Use development folds only. Never read or score hidden targets; an independent
 selector owns the sealed set. Never select using a visible/public board.
