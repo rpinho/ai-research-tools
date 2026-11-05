@@ -101,7 +101,10 @@ def unsurfaced(audit):
 
 def check_lane(name, cfg, now):
     c = {**DEFAULTS, **cfg}
-    end = now
+    # A row, log line or verdict written in the same second as this run is inside the window.
+    # Float seconds round to the nearest microsecond on the way into a timestamp, so an exact
+    # `t <= now` comparison drops the newest row about half the time.
+    end = now + 1
     start = now - c['window_hours'] * 3600
     logs = [p for g in c.get('logs', []) for p in glob.glob(os.path.expanduser(g))]
     hours = job_hours(logs, start, end)
