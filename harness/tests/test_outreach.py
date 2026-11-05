@@ -39,7 +39,7 @@ def cli(root, *args):
     return rc, out.getvalue(), err.getvalue()
 
 
-def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_name='test', attach=None):
+def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_name='test', attach=None, claim=None):
     root, _ = env
     path = root / ('body-' + str(len(list(root.glob('body-*')))) + '.txt')
     path.write_text(text or VARIED[0])
@@ -48,6 +48,8 @@ def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_
         args += ['--batch', batch]
     if attach:
         args += ['--attach', attach]
+    if claim:
+        args += ['--claim', claim]
     rc, out, err = cli(root, *args)
     assert rc == 0, err
     return out.strip(), path
@@ -447,3 +449,104 @@ def test_recipient_language_reaches_the_science_checker(env):
     with patch.object(outreach, 'science_checks', return_value=[]) as check:
         assert cli(root, 'lint', 'team', ident)[0] == 0
     assert check.call_args.args[2] == 'pt'
+
+
+def recheck_setup(env, name='alpha_A001', pod=False, rerun='match', verdict='SURVIVES',
+                  incident='2026-11-05T04:58:00+00:00', require=False):
+    """A claim directory and a re-check ledger, wired into the lane's OUTREACH.toml."""
+    import csv
+    root, lane = env
+    claim = root / 'claims' / name
+    claim.mkdir(parents=True)
+    (claim / 'CLAIM.md').write_text('# invented claim\n')
+    if pod:
+        (claim / 'pod_run.sh').write_text('#!/bin/sh\n')
+    recheck = root / 'recheck_1105'
+    recheck.mkdir(parents=True, exist_ok=True)
+    with (recheck / 'RECHECK.csv').open('w', newline='') as handle:
+        writer = csv.DictWriter(handle, fieldnames=('id', 'rerun', 'verdict', 'utc'))
+        writer.writeheader()
+        writer.writerow(dict(id=name, rerun=rerun, verdict=verdict,
+                             utc='2026-11-05T10:00:00+00:00'))
+    (lane / 'OUTREACH.toml').write_text(
+        'recheck_roots = ["{}"]\n'.format(recheck).replace('\\', '\\\\')
+        + ('pod_incident_utc = "{}"\n'.format(incident) if incident else '')
+        + ('require_claims = true\n' if require else ''))
+    return claim
+
+
+def test_lint_fails_a_result_email_whose_claim_was_never_independently_rechecked(env):
+    """Gate 1 end to end: the claim is real, the re-check ledger does not name it."""
+    root, _ = env
+    recheck_setup(env, name='alpha_A001')
+    other = root / 'claims' / 'alpha_A002'
+    other.mkdir(parents=True)
+    (other / 'CLAIM.md').write_text('# invented claim\n')
+    ident, _ = draft(env, claim=str(other))
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'FAIL' in out
+    assert 'evidence: claim alpha_A002' in out and 'no independent re-check recorded' in out
+    assert outreach.current(env[1], rh)[ident]['status'] == 'drafted'
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] != 0
+
+
+def test_lint_passes_a_result_email_whose_claim_a_separate_model_rebuilt(env):
+    """Gate 1 end to end, the passing case: the ledger says it was re-run and survived."""
+    root, _ = env
+    claim = recheck_setup(env, name='alpha_A001')
+    ident, _ = draft(env, claim=str(claim))
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 0 and 'PASS' in out and 'evidence' not in out
+    assert outreach.current(env[1], rh)[ident]['claims'] == [str(claim)]
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] == 0
+
+
+def test_lint_fails_pod_touched_evidence_rechecked_before_the_host_incident(env):
+    """Gate 2 end to end: evidence from a rented pod, re-checked the day before."""
+    root, _ = env
+    claim = recheck_setup(env, name='alpha_A003', pod=True,
+                          incident='2026-11-05T20:00:00+00:00')
+    ident, _ = draft(env, claim=str(claim))
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'produced on a pod' in out and 'pod_run.sh' in out
+    assert 'before the host incident' in out and 're-run it somewhere trusted' in out
+
+
+def test_lint_passes_pod_touched_evidence_rerun_after_the_host_incident(env):
+    """Gate 2 end to end, the passing case: the re-run is dated after the incident."""
+    root, _ = env
+    claim = recheck_setup(env, name='alpha_A004', pod=True,
+                          incident='2026-11-05T04:58:00+00:00')
+    ident, _ = draft(env, claim=str(claim))
+    assert cli(root, 'lint', 'test', ident)[0] == 0
+
+
+def test_a_lane_can_require_claims_and_an_unconfigured_lane_is_unaffected(env):
+    """The gates bind where a lane asks for them, and change nothing anywhere else."""
+    root, lane = env
+    recheck_setup(env, name='alpha_A005', require=True)
+    bare, _ = draft(env)
+    rc, out, _ = cli(root, 'lint', 'test', bare)
+    assert rc == 1 and '--claim' in out and 'separate model' in out
+    (lane / 'OUTREACH.toml').write_text('')
+    assert cli(root, 'lint', 'test', bare)[0] == 0, 'no config, no gate'
+
+
+def test_a_misconfigured_gate_refuses_rather_than_switching_itself_off(env):
+    root, lane = env
+    ident, _ = draft(env)
+    for bad in ('recheck_roots = "one-string"\n', 'require_claims = "yes"\n',
+                'pod_incident_utc = "last Tuesday"\n', 'require_claims = true\n'):
+        (lane / 'OUTREACH.toml').write_text(bad)
+        assert cli(root, 'lint', 'test', ident)[0] != 0, bad
+
+
+def test_the_science_checker_is_handed_the_claims(env):
+    root, _ = env
+    claim = recheck_setup(env, name='alpha_A006')
+    (root / 'lanes/test/OUTREACH.toml').write_text(
+        (root / 'lanes/test/OUTREACH.toml').read_text() + 'science_checks = true\n')
+    ident, _ = draft(env, claim=str(claim))
+    with patch.object(outreach, 'science_checks', return_value=[]) as check:
+        assert cli(root, 'lint', 'test', ident)[0] == 0
+    assert check.call_args.args[3] == [str(claim)]

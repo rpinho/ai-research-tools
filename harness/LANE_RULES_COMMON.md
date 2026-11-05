@@ -31,6 +31,17 @@ own science in English. `rh outreach lint` fails a technical paragraph in their 
 opening or closing that is not in it, and an attachment that is not English; ordinary prose
 in English anywhere in the email is a warning, because it belongs in their language too.
 
+**A result is not sendable until someone else rebuilt it (Ricardo, 11-05).** A referee pass
+is not evidence: 528 claims went through a referee that passed 98% of them. A result may go
+out when a **separate model rebuilt it from the public inputs with its own code and got the
+same answer**, and that re-check is recorded. Two of thirteen claims did not survive that on
+11-05. Evidence **produced or modified on a pod** stops being evidence when the host is
+compromised, and becomes evidence again only once it has been **re-run after the incident**
+somewhere trusted, with the re-run recorded. `rh outreach lint` fails an email whose claim
+has no recorded independent re-check, whose re-run did not reproduce it, whose re-check
+dropped it, or whose pod-touched evidence was last re-checked before the configured incident.
+Name the claims a draft reports with `rh outreach draft --claim DIR`.
+
 **How this is enforced.** `lane-yield` reads that ledger on a schedule. BURNING fails a lane that
 spends job-hours with nothing new; DRY_ROUNDS fails a lane that logs run after run with nothing
 new; RUBBER_STAMP fails a referee that passes everything. A lane that stops logging reads as a lane

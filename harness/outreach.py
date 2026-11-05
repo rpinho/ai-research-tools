@@ -1,5 +1,6 @@
 """Local outreach ledger and gates. This module never sends or fetches anything."""
 import settings
+import claim_evidence
 import mixed_language
 import datetime as dt
 import contextlib
@@ -69,6 +70,19 @@ def settings(lane, rh):
         cfg.setdefault(key, default)
         if type(cfg[key]) is not int or cfg[key] < 0 or (key == 'follow_up_days' and cfg[key] == 0):
             raise ValueError('OUTREACH ' + key + ' must be a positive integer (question_limit may be zero)')
+    # A gate that switches itself off on a typo is worse than no gate, so these are checked
+    # here rather than defaulted quietly inside the check.
+    cfg.setdefault('recheck_roots', [])
+    if type(cfg['recheck_roots']) is not list or any(type(r) is not str or not r.strip()
+                                                     for r in cfg['recheck_roots']):
+        raise ValueError('OUTREACH recheck_roots must be a list of directory paths or globs')
+    if type(cfg.setdefault('require_claims', False)) is not bool:
+        raise ValueError('OUTREACH require_claims must be true or false')
+    if cfg.get('pod_incident_utc') is not None:
+        if type(cfg['pod_incident_utc']) is not str or not claim_evidence.time_of(cfg['pod_incident_utc']):
+            raise ValueError('OUTREACH pod_incident_utc must be an ISO 8601 time')
+    if cfg['require_claims'] and not cfg['recheck_roots']:
+        raise ValueError('OUTREACH require_claims needs recheck_roots to check against')
     return cfg
 
 
@@ -185,15 +199,18 @@ def voice(text, channel):
         return ['xlint could not complete']
 
 
-def science_checks(text, attachments, language=None):
+def science_checks(text, attachments, language=None, claims=()):
     """Optional lane check: stdin JSON, stdout FAIL: lines, nonzero means refusal.
 
     `language` carries the recipient's contact language so an installation's own checker can
-    apply the mixed-language rule as well; a checker that ignores the field is unaffected.
+    apply the mixed-language rule as well, and `claims` the claim directories this message
+    reports, so the checker can apply the re-check gates to them. A checker that ignores
+    either field is unaffected.
     """
     try:
         run = subprocess.run(SCIENCE_COMMAND, input=json.dumps({'text': text, 'language': language,
-                                                                'attachments': [str(p) for p in attachments]}),
+                                                                'attachments': [str(p) for p in attachments],
+                                                                'claims': [str(c) for c in claims]}),
                              text=True, capture_output=True, timeout=30)
         errors = [line for line in run.stdout.splitlines() if line.startswith('FAIL:')]
         return errors or (['science checker could not complete'] if run.returncode else [])
@@ -368,7 +385,8 @@ def lint_rows(lane, selected, rh, allow_collision=None):
     peers.update({r['id']: r for r in selected})
     results = {}
     for row in selected:
-        checks = dict(voice=[], questions=[], contact=[], collision=[], links=[], science=[], language=[])
+        checks = dict(voice=[], questions=[], contact=[], collision=[], links=[], science=[],
+                      language=[], evidence=[])
         try:
             text = body(row)
         except (OSError, UnicodeError):
@@ -397,12 +415,21 @@ def lint_rows(lane, selected, rh, allow_collision=None):
         for other in ([] if row['channel'] in X_PUBLIC else collisions(row, everyone, clock)):
             if not allow_collision:
                 checks['collision'].append('recent send: {}/{}'.format(other['lane'], other['id']))
+        evidence_warnings = []
         checks['links'] = link_errors(text)
         # Mixed language: the technical paragraphs in English, the rest in the recipient's own.
         checks['language'], language_warnings = mixed_language.findings(
             text, language if row['channel'] == 'email' else None, row.get('attachments', []))
         if cfg.get('science_checks', False) and row['channel'] == 'email':
-            checks['science'] = science_checks(text, row.get('attachments', []), language)
+            checks['science'] = science_checks(text, row.get('attachments', []), language,
+                                               row.get('claims', []))
+        # The two postmortem gates (Ricardo, 11-05): a result is sendable only once a separate
+        # model has rebuilt it from the public inputs, and pod-touched evidence only once it has
+        # been re-run after the host incident. Both read the lane's own re-check ledger.
+        if row['channel'] == 'email':
+            checks['evidence'], evidence_warnings = claim_evidence.findings(
+                row.get('claims', []), cfg.get('recheck_roots', []),
+                cfg.get('pod_incident_utc'), cfg.get('require_claims', False))
         # Two emails in a batch resembling each other is a warning, not a failure (Ricardo,
         # 11-05): "I don't think anybody will be comparing emails. What's important is that it
         # doesn't sound like AI slop and that it uses my voice." A shared closing is the usual
@@ -418,7 +445,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                                           'as a template'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
                 batch_warnings.append('comparison draft unreadable: ' + other['id'])
-        warnings = list(language_warnings) + batch_warnings
+        warnings = list(language_warnings) + evidence_warnings + batch_warnings
         if row['channel'] in X_PUBLIC:
             checks['reach'], reach_warnings = x_checks(row, text, everyone, clock, selected)
             warnings += reach_warnings
@@ -485,6 +512,7 @@ def arguments(sub):
             p.add_argument('--media', action='append', default=[], type=Path)
             p.add_argument('--project', action='append', default=[], help='stable project tag for the 48 h series check')
             p.add_argument('--attach', action='append', default=[], help='attached results, checked with the configured science command')
+            p.add_argument('--claim', action='append', default=[], help='claim directory this reports; gated on its independent re-check')
         elif action in ('lint', 'approve'):
             p.add_argument('id', nargs='?')
             p.add_argument('--batch')
@@ -557,6 +585,8 @@ def main(root, args, rh):
                 row['batch'] = safe(args.batch, 'batch')
             if args.attach:
                 row['attachments'] = [str(Path(p).expanduser().resolve()) for p in args.attach]
+            if args.claim:
+                row['claims'] = [str(Path(c).expanduser().resolve()) for c in args.claim]
             record(lane, row, rh)
             print(row['id'])
             return 0
