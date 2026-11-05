@@ -1,5 +1,8 @@
 # Agent entry point
 
+> **HARD RULE (11-04): the goal must not turn into process, and success is never activity.** A lane exists to find something new. Our failure mode is the ask being reframed into gates, receipts, audits and validation layers, then tests, checks, ideas and verdicts being counted as progress. Enforced in code, not prose: `launch.sh` refuses new specs over 1,000 words without `SPEC_OVER_CAP=<reason>` and lints every job for `You asked: ... I will: ...` (STATUS.md) and `Shipped: ...` (REPORT.md) into a job-yield ledger; `lane-yield` fails any lane that spends 20+ job-hours with no refereed new result (`lanes/<lane>/RESULTS.jsonl`, written by `log-result`) or whose referee passes 90%+.
+
+
 **Please let's do normal things unless they don't work.** Standard method first; deviate only after it fails, and say where. Trivial predictor and simple baseline before any predictive claim. Every result answers one question: did you find something new, yes or no? [Normal first](docs/normal-first.md).
 
 Run bounded agents on open research problems and competitions.
