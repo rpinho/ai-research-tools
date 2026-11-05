@@ -20,8 +20,10 @@ import harvest as h
 import harvest_reader as reader
 import pods
 import rh
+import storage
 
 ORIGINAL_PROXY = h.Proxy
+ORIGINAL_TRASH = storage.trash  # the autouse fixture replaces it with a reversible move
 
 
 @pytest.fixture(autouse=True)
@@ -1319,3 +1321,55 @@ def test_media_filter_keeps_code_named_like_media_11_03():
     ts[0] = ts[188] = ts[376] = 0x47
     assert h.media('capture.ts', bytes(ts))
     assert h.media('clip.mp4', b'')
+
+
+def test_a_prune_that_cannot_move_is_journaled_and_keeps_the_verified_run(setup, monkeypatch, tmp_path):
+    """11-04: a 30-second Trash timeout killed the prune, so six good harvests of friends/fz67
+    were journaled unverified and notified as "results not copied" although the copy worked.
+    Disposal is the last act of an already verified harvest: its failure keeps the snapshot,
+    records its own event, and says nothing about the copy.
+    """
+    def refuse(directory):
+        raise subprocess.TimeoutExpired('/usr/bin/trash', 30)
+    first, second = run(setup), run(setup)
+    monkeypatch.setattr(h, 'trash_snapshot', refuse)
+    third = run(setup)
+    assert third['verified'] and third['errors'] == []
+    assert Path(first['snapshot']).exists(), 'a snapshot that will not move is kept'
+    journal = h.rows(h.state_root(setup[0]) / 'HARVEST.jsonl')
+    failed = [r for r in journal if r.get('event') == 'SNAPSHOT_REMOVE_FAILED']
+    assert [r['path'] for r in failed] == [first['snapshot']]
+    assert failed[0]['error'] == 'TimeoutExpired' and failed[0]['disposition'] == 'kept'
+    assert not [r for r in journal if r.get('event') == 'SNAPSHOT_REMOVED']
+    # The next run disposes of it normally, so a transient refusal is not a dead end.
+    def move(directory):
+        destination = tmp_path / 'retry-trash' / directory.name
+        destination.parent.mkdir(exist_ok=True)
+        directory.rename(destination)
+    monkeypatch.setattr(h, 'trash_snapshot', move)
+    assert run(setup)['verified']
+    assert not Path(first['snapshot']).exists() and not Path(second['snapshot']).exists()
+
+
+def test_trash_budget_grows_with_the_tree_and_stops_at_the_ceiling(tmp_path, monkeypatch):
+    """A fixed 30 seconds fitted one alert file and no snapshot; the budget now counts."""
+    one = tmp_path / 'alert.json'
+    one.write_text('{}')
+    assert storage.timeout(one) == pytest.approx(storage.TIMEOUT_FLOOR + storage.TIMEOUT_PER_ENTRY)
+    tree = tmp_path / 'snapshot'
+    (tree / 'workspace').mkdir(parents=True)
+    for i in range(300):
+        (tree / 'workspace' / ('f%d.h5' % i)).write_text('x')
+    assert storage.timeout(tree) > 60 and storage.timeout(tree) < storage.TIMEOUT_CEILING
+    assert storage.entries(tree) == 302  # the tree, its directory and 300 files
+    monkeypatch.setattr(storage, 'COUNT_LIMIT', 10)
+    assert storage.timeout(tree) == pytest.approx(storage.TIMEOUT_FLOOR + 2.0)
+    # The command is given that budget, and a hang is still bounded.
+    seen = {}
+    def record(argv, **kw):
+        seen.update(kw)
+        return SimpleNamespace(returncode=0)
+    monkeypatch.setattr(storage.subprocess, 'run', record)
+    ORIGINAL_TRASH(one)
+    assert seen['timeout'] == pytest.approx(storage.TIMEOUT_FLOOR + storage.TIMEOUT_PER_ENTRY)
+    assert seen['check'] is True

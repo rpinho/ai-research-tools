@@ -515,7 +515,18 @@ def retain(base, pod, log, now, index):
                      scope=scope(pod), path=str(directory), files=len(inventory),
                      bytes=sum(value[0] for value in inventory.values()), disposition='Trash')
         append(log, dict(event, event='SNAPSHOT_REMOVE_STARTED'))
-        trash_snapshot(directory)
+        try:
+            trash_snapshot(directory)
+        except (OSError, subprocess.SubprocessError) as error:
+            # Disposal is the last act of a harvest whose payload is already copied and
+            # verified above. A snapshot that will not move is simply kept, so nothing is
+            # lost: the failure belongs in this journal under its own event, and must not
+            # retract the verified run or read as a copy failure. Without this, a 30-second
+            # Trash timeout on friends/fz67 marked six good harvests unverified and fired
+            # "results not copied" notifications about a copy that had worked (11-04).
+            append(log, dict(event, event='SNAPSHOT_REMOVE_FAILED',
+                             error=type(error).__name__, disposition='kept'))
+            continue
         sync_dir(directory.parent)
         append(log, dict(event, event='SNAPSHOT_REMOVED'))
 
