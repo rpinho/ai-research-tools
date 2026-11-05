@@ -90,7 +90,9 @@ def lint(d, new_only=False):
         else:
             try:
                 rows = json.loads(b.read_text())
-                rows = rows if isinstance(rows, list) else [rows]
+                rows = baseline_rows(rows)
+                if not rows:
+                    raise ValueError('no baseline rows')
                 for r in rows:
                     v = sbs(r['trivial'], r['simple'], r['method'], r.get('higher_is_better', True))
                     if abs(v - float(r['sbs'])) > 1e-6:
@@ -100,6 +102,25 @@ def lint(d, new_only=False):
         if not re.search(r'\bSBS\b', text):
             errs.append('predictive metric found: state the SBS in the claim text')
     return errs
+
+
+
+def baseline_rows(data):
+    """Flatten BASELINES.json: one sbs.py record, a list of them, or a dict of
+    named records (one per metric). A named record may hold sbs.py's JSON in
+    its "stdout" field, as written by a job that saved the command and output."""
+    if isinstance(data, list):
+        return [r for x in data for r in baseline_rows(x)]
+    if not isinstance(data, dict):
+        return []
+    if 'trivial' in data:
+        return [data]
+    if isinstance(data.get('stdout'), str):
+        try:
+            return baseline_rows(json.loads(data['stdout']))
+        except json.JSONDecodeError:
+            return []
+    return [r for v in data.values() if isinstance(v, (dict, list)) for r in baseline_rows(v)]
 
 
 def main(argv=None):

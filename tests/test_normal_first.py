@@ -112,3 +112,18 @@ def test_note_needs_builds_on_note_file_and_prior_art(tmp_path):
     assert lint(tmp_path) == []
     (tmp_path / 'CLAIM.md').write_text(NOTE.replace('Prior art: closest is X 2015, which used 12 genomes\n', ''))
     assert any('Prior art' in e for e in lint(tmp_path))
+
+
+def test_baselines_per_metric_with_saved_stdout(tmp_path):
+    # 11-05: a note with one sbs.py record per metric (command + stdout saved) failed with KeyError 'trivial'
+    (tmp_path / 'CLAIM.md').write_text(GOOD + 'MAE 0.1087 vs simple 0.1392. SBS 0.782.\n')
+    good = {'metric': 'MAE', 'higher_is_better': False, 'trivial': 0.2487, 'simple': 0.1392,
+            'method': 0.1087, 'sbs': sbs(0.2487, 0.1392, 0.1087, False)}
+    (tmp_path / 'BASELINES.json').write_text(json.dumps({'SSI': {'command': ['sbs.py'], 'stdout': json.dumps(good)},
+                                                         'MiBa': dict(good)}))
+    assert lint(tmp_path) == []
+    bad = dict(good, sbs=0.1)
+    (tmp_path / 'BASELINES.json').write_text(json.dumps({'SSI': {'stdout': json.dumps(bad)}}))
+    assert any('does not match' in e for e in lint(tmp_path))
+    (tmp_path / 'BASELINES.json').write_text(json.dumps({'SSI': {'command': ['x']}}))
+    assert any('unreadable or incomplete' in e for e in lint(tmp_path))
