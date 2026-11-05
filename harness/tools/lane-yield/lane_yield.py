@@ -16,6 +16,11 @@ and FAILS the lane when
   BURNING        job_hours >= max_job_hours_without_new and new_yes == 0
   RUBBER_STAMP   verdicts >= min_verdicts and pass share >= max_pass_share (a referee that passes everything
                  is not refereeing)
+  UNSURFACED     (lanes with `surface_audit`) a claim with a HOLDS verdict, at any time, whose id is in no
+                 audit CSV. Why (2026-11-05): the 11-04 strict audit took a hand-picked list of 7 friends, and
+                 147 HOLDS claims of 19 other friends (alpha included, who Ricardo then wanted to write to) were
+                 never audited. Coverage is every claim dir, so a new friend can't be skipped. This failure
+                 pushes general but never writes the hold file: missing paperwork is not spending in circles.
 Every research lane is configured, not only one: the point of a lane is something new.
 A lane with `report_only: true` is pushed to general on FAIL but gets no hold file.
 With --act, a failing lane gets its hold file written (its loops stop spending) and a push to general.
@@ -71,6 +76,26 @@ def verdict_head(d):
         return None
 
 
+def unsurfaced(audit):
+    """HOLDS claims whose id appears in no audit CSV (first column `id`). audit = {claims: [globs], csv: [globs]}."""
+    seen = set()
+    for g in audit.get('csv', []):
+        for p in glob.glob(os.path.expanduser(g)):
+            try:
+                import csv
+                with open(p, newline='', errors='replace') as f:
+                    seen.update((r.get('id') or '').strip() for r in csv.DictReader(f))
+            except OSError:
+                continue
+    missing = {}
+    for g in audit.get('claims', []):
+        for p in glob.glob(os.path.expanduser(g)):
+            d = Path(p)
+            if d.is_dir() and d.name not in seen and (verdict_head(d) or '').upper().startswith('HOLDS'):
+                missing.setdefault(d.name.split('_')[0], []).append(d.name)
+    return missing
+
+
 def check_lane(name, cfg, now):
     c = {**DEFAULTS, **cfg}
     end = now
@@ -107,13 +132,19 @@ def check_lane(name, cfg, now):
         fails.append(f'BURNING: {hours:.0f} job-hours in {c["window_hours"]} h and nothing new (0 refereed NEW: yes claims)')
     if verdicts >= c['min_verdicts'] and share >= c['max_pass_share']:
         fails.append(f'RUBBER_STAMP: referee passed {passes}/{verdicts} ({share:.0%}); a referee that passes everything is not refereeing')
+    missing = unsurfaced(c['surface_audit']) if c.get('surface_audit') else {}
+    if missing:
+        n = sum(len(v) for v in missing.values())
+        per = ', '.join(f'{k} {len(v)}' for k, v in sorted(missing.items(), key=lambda kv: -len(kv[1])))
+        fails.append(f'UNSURFACED: {n} HOLDS claims of {len(missing)} friends never audited ({per})')
     return dict(lane=name, as_of=datetime.fromtimestamp(now).isoformat(timespec='minutes'), job_hours=round(hours, 1),
                 new_yes=new_yes, verdicts=verdicts, pass_share=round(share, 3), status='FAIL' if fails else 'PASS', fails=fails)
 
 
 def act(row, cfg):
     hold = cfg.get('hold')
-    if hold and not cfg.get('report_only'):
+    spending = [f for f in row['fails'] if not f.startswith('UNSURFACED')]
+    if hold and spending and not cfg.get('report_only'):
         p = Path(os.path.expanduser(hold))
         if not p.exists():
             p.write_text(f'HOLD by lane-yield {row["as_of"]}: ' + '; '.join(row['fails']) + '\nOnly general removes this file.\n')
