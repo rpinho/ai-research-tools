@@ -43,3 +43,25 @@ def test_rubber_stamp_referee_fails(tmp_path):
     cfg = dict(logs=[], claims=[str(tmp_path / 'claims/*')])
     r = ly.check_lane('a', cfg, now)
     assert any(f.startswith('RUBBER_STAMP') for f in r['fails'])
+
+
+def test_results_ledger_counts_refereed_new_results(tmp_path):
+    log = tmp_path / 'math_a.log'; write_log(log, 23)
+    now = ly.parse_stamp('exit 0 Tue Nov  3 23:30:00 EST 2026')
+    ledger = tmp_path / 'RESULTS.jsonl'
+    cfg = {'logs': [str(log)], 'results': [str(ledger)]}
+    assert ly.check_lane('m', cfg, now)['status'] == 'FAIL'
+    utc = ly.datetime.fromtimestamp(now - 3600).astimezone().isoformat()
+    ledger.write_text(json.dumps({'utc': utc, 'new': True, 'kind': 'value', 'referee': 'NONE'}) + '\n')
+    assert ly.check_lane('m', cfg, now)['status'] == 'FAIL'  # unrefereed does not count
+    ledger.write_text(json.dumps({'utc': utc, 'new': True, 'kind': 'value', 'referee': 'HOLDS'}) + '\n')
+    assert ly.check_lane('m', cfg, now)['status'] == 'PASS'
+
+
+def test_report_only_lane_gets_no_hold_file(tmp_path, monkeypatch):
+    hold = tmp_path / 'HOLD'
+    monkeypatch.setattr(ly.Path, 'home', lambda: tmp_path)
+    ly.act({'lane': 'm', 'as_of': 'x', 'fails': ['BURNING']}, {'hold': str(hold), 'report_only': True})
+    assert not hold.exists()
+    ly.act({'lane': 'm', 'as_of': 'x', 'fails': ['BURNING']}, {'hold': str(hold)})
+    assert hold.exists()

@@ -8,12 +8,16 @@ verdicts written), never yield. This test measures yield.
 
 For each configured lane, over a rolling window (default 48 h) it computes:
   job_hours   wall-clock hours of agent jobs, from launcher logs ("=== run/attempt ... <date>" .. "exit ... <date>")
-  new_yes     claims that say NEW: yes, pass result-lint and have a HOLDS verdict (something new and refereed)
+  new_yes     claims that say NEW: yes, pass result-lint and have a HOLDS verdict (something new and refereed),
+              plus lines in the lane's results ledgers (`results`: JSONL written by log_result.py) with
+              new=true and a refereed verdict, for lanes whose results are PRs, notes or submissions, not claims
   verdicts    referee verdicts written in the window, and the share that pass
 and FAILS the lane when
   BURNING        job_hours >= max_job_hours_without_new and new_yes == 0
   RUBBER_STAMP   verdicts >= min_verdicts and pass share >= max_pass_share (a referee that passes everything
                  is not refereeing)
+Every research lane is configured, not only one: the point of a lane is something new.
+A lane with `report_only: true` is pushed to general on FAIL but gets no hold file.
 With --act, a failing lane gets its hold file written (its loops stop spending) and a push to general.
 Exit 0 = all lanes PASS, 1 = some lane FAILS, 2 = config error.
 """
@@ -84,6 +88,19 @@ def check_lane(name, cfg, now):
             passes += ok
             if ok and not lint(d, new_only=True):
                 new_yes += 1
+    for g in c.get('results', []):
+        for p in glob.glob(os.path.expanduser(g)):
+            try:
+                rows = [json.loads(l) for l in open(p, errors='replace') if l.strip()]
+            except (OSError, json.JSONDecodeError):
+                continue
+            for r in rows:
+                try:
+                    t = datetime.fromisoformat(str(r['utc']).replace('Z', '+00:00')).timestamp()
+                except (KeyError, ValueError):
+                    continue
+                if start <= t <= end and r.get('new') is True and str(r.get('referee', '')).upper().startswith('HOLDS'):
+                    new_yes += 1
     share = passes / verdicts if verdicts else 0.0
     fails = []
     if hours >= c['max_job_hours_without_new'] and new_yes == 0:
@@ -96,7 +113,7 @@ def check_lane(name, cfg, now):
 
 def act(row, cfg):
     hold = cfg.get('hold')
-    if hold:
+    if hold and not cfg.get('report_only'):
         p = Path(os.path.expanduser(hold))
         if not p.exists():
             p.write_text(f'HOLD by lane-yield {row["as_of"]}: ' + '; '.join(row['fails']) + '\nOnly general removes this file.\n')
