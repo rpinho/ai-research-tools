@@ -77,10 +77,22 @@ def test_short_edges_are_judged_by_their_greeting_words():
 
 def test_a_middle_personal_line_in_english_only_warns():
     failures, warnings = ml.findings(
-        email(GREETING_PT, 'By the way, I hope the move went well and that you are settled in.',
+        email(GREETING_PT, 'By the way, I hope the family is well and the holidays went nicely.',
               SCIENCE_EN, SIGNOFF_PT), 'pt')
     assert failures == []
     assert len(warnings) == 1 and 'paragraph 2' in warnings[0]
+
+
+@pytest.mark.parametrize('line', [
+    "I agree with all of it, and I won't call it an erratum.",
+    "On the arXiv note with a data record: I would like to add one.",
+    'The argument holds for the general case, which is the part worth saying out loud.',
+])
+def test_english_discussion_in_the_middle_is_never_flagged(line):
+    """The rule puts discussion and summary in English with the numbers, so English prose in
+    the middle is right, not a lapse. Warning on it nagged at correct drafts (friends, 11-05).
+    """
+    assert ml.findings(email(GREETING_PT, line, SCIENCE_EN, SIGNOFF_PT), 'pt') == ([], [])
 
 
 def test_an_all_english_email_with_numbers_in_one_paragraph_fails_the_shape():

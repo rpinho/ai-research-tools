@@ -8,8 +8,10 @@ the email does. The shape holds even for a recipient who writes their own scienc
 there is no "match their language" exception.
 
 So three things fail: an opening that is not Portuguese, a closing that is not Portuguese, and
-a science paragraph that is Portuguese. A personal line in the middle of the email that drifts
-into English is only a warning, since the shape the rule fixes is the opening and the close.
+a science paragraph that is Portuguese. The middle of the email is English by default, because
+that is where the discussion and the summary live as well as the numbers; a paragraph there is
+only warned about when it is plainly personal and written in English, and the shape the rule
+fixes is the opening and the close.
 
 Language identification here is a deliberately small offline heuristic. It counts function
 words that one language has and the other does not, plus letters that English does not use.
@@ -66,6 +68,21 @@ SCIENCE_TERMS = frozenset('''
     hipotese hipótese ressalva ressalvas limitacao limitação conclusao conclusão
 '''.split())
 
+# Words that make a middle paragraph personal rather than part of the science: family, health,
+# travel, plans, well-wishing. The middle of the email is English by default, because the rule
+# puts the discussion and the summary there alongside the numbers, so a warning needs positive
+# evidence that a paragraph is personal. Without this, "I agree, and I won't call it an erratum"
+# -- discussion, correctly in English -- was warned for not being Portuguese (friends, 11-05).
+PERSONAL_WORDS = frozenset('''
+    family wife husband son daughter kids children baby holiday holidays vacation weekend
+    birthday congratulations wedding health hospital trip travel visit dinner lunch coffee
+    hope hopefully glad lovely great sorry miss catch wonderful summer winter christmas
+    familia família esposa marido filho filha filhos miudos miúdos bebe bebé ferias férias
+    feriado fim semana aniversario aniversário parabens parabéns casamento saude saúde
+    hospital viagem visita jantar almoco almoço cafe café espero contente otimo ótimo
+    pena saudades natal verao verão inverno
+'''.split())
+
 MIN_WORDS = 4  # Below this a paragraph is a salutation or a link, not prose to judge.
 
 # Openings and closings are short, so word counting often cannot call them. These settle the
@@ -103,6 +120,11 @@ def is_science(paragraph):
     numbers = len(NUMBER.findall(paragraph))
     terms = sum(w in SCIENCE_TERMS for w in words(paragraph))
     return bool(STATISTIC.search(paragraph)) or numbers >= 2 or (numbers >= 1 and terms >= 1)
+
+
+def is_personal(paragraph):
+    """True when a middle paragraph is about the person, not about the work."""
+    return any(w in PERSONAL_WORDS for w in words(paragraph))
 
 
 def paragraphs(text):
@@ -164,7 +186,7 @@ def findings(text, language, attachments=()):
             if found == 'pt':
                 failures.append('paragraph {}: results, numbers, methods and caveats go in '
                                 'English, the science language'.format(number))
-        elif found == 'en':
+        elif found == 'en' and is_personal(paragraph):
             warnings.append('paragraph {}: a personal line reads better in European '
                             'Portuguese'.format(number))
     for path in attachments:
