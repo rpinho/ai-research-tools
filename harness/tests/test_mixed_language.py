@@ -18,6 +18,16 @@ SCIENCE_PT = ('Medimos uma correlação de 0.68 entre o comprimento e a média, 
               'ordenação segue o comprimento. O controlo dá 0.11 com os mesmos dados.')
 SIGNOFF_PT = 'Obrigado pelo teu tempo e um abraço, até breve.'
 SIGNOFF_EN = 'Thanks very much for your time and best regards.'
+# A life story: a year, a span of years, a job title. Invented, with the shape of the reply
+# that the lint wrongly blocked on 11-05.
+LIFE_PT = ('Trabalho em dados há muitos anos. Saí do país em 2009 e, quando acabei o curso, '
+           'passei para a indústria. Há 4 anos que lidero uma equipa de dados numa empresa '
+           'de software.')
+# "100% teórico" is European Portuguese for "entirely theoretical", not a measurement.
+IDIOM_PT = ('Também ando a mexer em biologia e não consigo grande coisa. É mais difícil, não '
+            'sou especialista na área, e o que estudei foi 100% teórico.')
+RESULTS_PT = ('No conjunto CW50 a mediana desce de 14.47 para 14.21 e o p90 fica em 30 s, com '
+              'a mesma semente.')
 
 
 def email(*parts):
@@ -122,6 +132,55 @@ def test_a_personal_line_with_a_number_is_not_technical():
     failures, warnings = ml.findings(email('Obrigado pelos 20 minutos de ontem, foi muito útil para nós.',
                                            SCIENCE_EN, SIGNOFF_PT), 'pt')
     assert failures == [] and warnings == []
+
+
+@pytest.mark.parametrize('line', [
+    LIFE_PT,
+    IDIOM_PT,
+    'Vi a tua pergunta na Remark 4.2 e fiquei a pensar nela durante o fim de semana.',
+    'Mandei-te 2 mensagens na semana passada, mas percebo que andes ocupado com isso.',
+])
+def test_a_life_story_is_not_a_technical_paragraph(line):
+    """A reply written in Ricardo's own words, all Portuguese with no science in it, failed
+    this lint on 11-05 (general): a year, a span of years and the intensifier "100% teórico"
+    were counted as results, and job titles brought the technical vocabulary with them. A
+    year, a duration in words, a numbered reference and a counted thing are not measurements.
+    """
+    assert not ml.is_technical(line)
+    assert ml.findings(email(GREETING_PT, line, SCIENCE_EN, SIGNOFF_PT), 'pt') == ([], [])
+
+
+def test_the_whole_personal_reply_passes_clean():
+    """The same reply end to end: Portuguese throughout, nothing technical, nothing to say."""
+    assert ml.findings(email(GREETING_PT, LIFE_PT,
+                             'Mas é complicado, não é? Não faço ideia do que a ferramenta está '
+                             'a fazer, e sem contexto isso vale pouco.',
+                             IDIOM_PT, SIGNOFF_PT), 'pt') == ([], [])
+
+
+def test_a_portuguese_results_paragraph_still_fails():
+    """The other half of the rule has to keep working: units, decimals and variable-like
+    tokens are the measurement, and the measurement goes in English.
+    """
+    assert ml.is_technical(RESULTS_PT)
+    failures, warnings = ml.findings(email(GREETING_PT, RESULTS_PT, SIGNOFF_PT), 'pt')
+    assert len(failures) == 1 and 'paragraph 2' in failures[0] and 'English' in failures[0]
+    assert warnings == []
+
+
+def test_a_measured_number_is_technical_and_a_counted_one_is_not():
+    assert ml.is_technical('A mediana ficou em 7 s e o máximo em 10 min.')
+    assert ml.is_technical('O valor desce de 14.47 para 14.21 com a mesma semente.')
+    assert ml.is_technical('Os ótimos são 182, 179, 180 e 204 nas quatro instâncias.')
+    assert not ml.is_technical('Fomos lá três vezes este ano e correu sempre bem.')
+
+
+def test_quantities_tells_a_measurement_from_a_date_or_a_citation():
+    assert ml.quantities('Saí em 2009 e há 4 anos que faço isto.') == (0, 0)
+    assert ml.quantities('A mediana é 7 s e o desvio 0.31.') == (2, 0)
+    assert ml.quantities('A Tabela 3 e a Remark 4.2 dizem o contrário.') == (0, 0)
+    assert ml.quantities('Está em https://example.org/abs/2407.09836, ao fundo.') == (0, 0)
+    assert ml.quantities('Os valores são 182, 179 e 180.') == (0, 3)
 
 
 def test_statistics_make_a_paragraph_technical_even_without_two_numbers():

@@ -13,10 +13,13 @@ has looked at it yet", "is this useful or is it slop?" are ordinary prose and be
 Portuguese. An earlier version of this file had that backwards, after "discussion and
 summary" was read as part of the science block.
 
-Technical means digits beside result vocabulary, two or more numbers, a statistic, a maths
-symbol, a variable-like token, or a dense run of technical terms. Term vocabulary alone is
-not enough: "a separate model re-checked the result" uses two of those words and is still
-ordinary prose.
+Technical means a maths symbol, a variable-like token, a statistical acronym, a measured
+number (a decimal, or a number with an abbreviated unit), a run of three or more bare
+numbers, or a dense run of technical terms. None of those is a year, a duration in words or
+a job title: "estou fora do país desde 2009", "há 4 anos que lidero uma equipa de dados" and
+"o doutoramento foi 100% teórico" are a life story (general, 11-05). Term vocabulary alone is
+not enough either: "a separate model re-checked the result" uses two of those words and is
+still ordinary prose.
 
 Language identification here is a deliberately small offline heuristic. It counts function
 words that one language has and the other does not, plus letters that English does not use.
@@ -58,7 +61,33 @@ WORD = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*", re.UNICODE)
 
 # A number that carries quantity, not a date or a list marker.
 NUMBER = re.compile(r'(?<![\w/-])[-+]?\d+(?:[.,]\d+)?(?![\w/-])')
-STATISTIC = re.compile(r'\b[rnp]\s*[=<>]|±|%', re.I)
+# Not every number is a measurement. A year is a date, and a duration written out in words is a
+# span of a life: "desde 2009", "há 4 anos", "obrigado pelos 20 minutos" are biography and
+# courtesy. A measurement is written with a symbol -- "mediana 7 s", "p90 30 min", 14.47 -- so
+# abbreviated units count and spelled-out time words do not (general, 11-05: a reply in
+# Ricardo's own words was blocked by a year and a duration being counted as results).
+YEAR = re.compile(r'(?:1[89]|20)\d\d')
+DURATION = re.compile(r'''\d+(?:[.,]\d+)?\s*
+    (?:anos?|meses|m[êe]s|semanas?|dias?|horas?|minutos?|segundos?
+      |years?|months?|weeks?|days?|hours?|minutes?|seconds?)\b''', re.I | re.X)
+# "100% teórico", "a 100%" is European Portuguese for "entirely". Any other percentage is a
+# measurement.
+PERCENT_IDIOM = re.compile(r'\b(?:0|100)\s*%')
+# A link and a numbered reference carry no measurement: "Remark 4.2", "Tabela B.7", "eq. (12)"
+# and an arXiv id are labels pointing somewhere else. A bare "(8.26)" is left alone, because in
+# a results paragraph a parenthesised decimal is as often a value as an equation number.
+LINK = re.compile(r'(?:https?://|www\.|arxiv:|doi:)\S+', re.I)
+REFERENCE = re.compile(r'''\b(?:remarks?|lemmas?|theorems?|corollar(?:y|ies)|prop(?:osition)?s?
+      |conjectures?|tables?|figs?|figures?|eqs?|equations?|sections?|secs?|appendi(?:x|ces)
+      |chapters?|pages?|pp?|lines?|items?|notes?|steps?|versions?|v
+      |observa[cç][oõ]es|observa[cç][aã]o|lemas?|teoremas?|corol[aá]rios?|proposi[cç][oõ]es
+      |proposi[cç][aã]o|conje[ct]turas?|tabelas?|figuras?|equa[cç][oõ]es|equa[cç][aã]o
+      |sec[cç][oõ]es|sec[cç][aã]o|se[cç][aã]o|ap[eê]ndices?|cap[ií]tulos?|p[aá]ginas?
+      |linhas?|notas?|passos?|vers[oõ]es|vers[aã]o)
+      \b\.?\s*\(?\d+(?:[.,]\d+)*\)?''', re.I | re.X)
+# Abbreviated units, which make the number beside them a measurement.
+UNIT = re.compile(r'''\s*(?:%|(?:ms|us|ns|s|min|h|hz|khz|mhz|ghz|kb|mb|gb|tb|px
+                               |nm|mm|cm|km|m|kg|mg|ug|g|ev|kev|mev|gev|bp|x)\b)''', re.X)
 # Case matters for these, and only for these: under re.I the Portuguese conjunction "se" --
 # "ver se conseguem", "só se te apetecer" -- matched \bSE\b, so any Portuguese paragraph
 # using it was read as a result and failed for not being in English (friends, 11-05).
@@ -109,24 +138,49 @@ def language_of(text):
     return 'pt' if pt > en else 'en'
 
 
+def quantities(paragraph):
+    """(measured, bare): numbers that carry a measurement, and numbers that may not.
+
+    A number is measured when it is a decimal or sits beside an abbreviated unit. Years,
+    durations written out in words, the idiomatic 100%, links and numbered references are
+    dropped before counting: a paragraph whose only numbers are those is a biography or a
+    citation, not a result.
+    """
+    text = paragraph
+    for pattern in (LINK, REFERENCE, DURATION, PERCENT_IDIOM):
+        text = pattern.sub(' ', text)
+    measured = bare = 0
+    for match in NUMBER.finditer(text):
+        token = match.group(0)
+        if YEAR.fullmatch(token):
+            continue
+        if '.' in token or ',' in token or UNIT.match(text, match.end()):
+            measured += 1
+        else:
+            bare += 1
+    return measured, bare
+
+
 def is_technical(paragraph):
     """True when the paragraph carries the measurement rather than talks about the work.
 
-    One stray number does not make it technical: "obrigado pelos 20 minutos" is an ordinary
-    line. Neither does the vocabulary on its own, or "a separate model re-checked the result"
-    would be technical when it is plain prose (Ricardo's example, 11-05). It takes a number
-    beside that vocabulary, two numbers, a statistic, a maths symbol, a variable-like token,
-    or a dense run of terms.
+    Plain numbers do not make it technical. "Obrigado pelos 20 minutos", "desde 2009", "há 4
+    anos" and "100% teórico" are ordinary lines, and the three of them together blocked a
+    reply written in Ricardo's own words (general, 11-05). Neither does the vocabulary on its
+    own, or "a separate model re-checked the result" would be technical when it is plain prose
+    (Ricardo's example, 11-05). It takes a maths symbol, a variable-like token, a statistical
+    acronym, a measured number, a run of bare numbers, or a dense run of distinct terms.
     """
     found = words(paragraph)
-    numbers = len(NUMBER.findall(paragraph))
-    terms = sum(w in TECHNICAL_TERMS for w in found)
-    if STATISTIC.search(paragraph) or ACRONYM.search(paragraph):
+    if MATH.search(paragraph) or VARIABLE.search(paragraph) or ACRONYM.search(paragraph):
         return True
-    if MATH.search(paragraph) or VARIABLE.search(paragraph):
+    measured, bare = quantities(paragraph)
+    # One measured number is a result; bare numbers only read as one when they come in a run,
+    # the shape of a table or a list of optima.
+    if measured or bare >= 3:
         return True
-    if numbers >= 2 or (numbers >= 1 and terms >= 1):
-        return True
+    # Distinct terms, so "data science e data engineering" is one term and not two.
+    terms = len(set(found) & TECHNICAL_TERMS)
     return terms >= 3 and terms / max(len(found), 1) >= 0.12
 
 
