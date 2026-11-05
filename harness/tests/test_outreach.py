@@ -344,3 +344,81 @@ def test_outreach_only_lane_skips_research_checks(tmp_path):
     assert result['depth'] is None and not any(f['check'] in ('queue-depth', 'intake-freshness') for f in result['failures'])
     (lane / 'IDEAS.jsonl').write_text('')
     assert not rh.outreach_only(lane)
+
+
+PT_GREETING = 'Olá Beta, tudo bem? Espero que o trabalho esteja a correr bem por aí.'
+PT_SIGNOFF = 'Obrigado pelo teu tempo e um abraço, até breve.'
+EN_SCIENCE = ('We measured a correlation of 0.68 between length and the mean score, so the '
+              'ranking tracks length. The control run gives 0.11 on the same dataset.')
+PT_SCIENCE = ('Medimos uma correlação de 0.68 entre o comprimento e a média, portanto a '
+              'ordenação segue o comprimento. O controlo dá 0.11 com os mesmos dados.')
+
+
+def with_language(env, name='Contact Beta', language='pt'):
+    """Give one fixture contact a language, the way a private contacts file would."""
+    rows = json.loads(outreach.CONTACTS.read_text())
+    for row in rows:
+        if row['name'] == name:
+            row['language'] = language
+    outreach.CONTACTS.write_text(json.dumps(rows))
+
+
+def test_portuguese_recipient_fails_on_portuguese_science(env):
+    root, lane = env
+    with_language(env)
+    ident, _ = draft(env, '\n\n'.join([PT_GREETING, PT_SCIENCE, PT_SIGNOFF]), to='Contact Beta')
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'language:' in out and 'paragraph 2' in out
+    assert outreach.current(lane, rh)[ident]['status'] == 'drafted'
+
+
+def test_portuguese_recipient_passes_when_the_shape_is_right(env):
+    root, lane = env
+    with_language(env)
+    ident, _ = draft(env, '\n\n'.join([PT_GREETING, EN_SCIENCE, PT_SIGNOFF]), to='Contact Beta')
+    assert cli(root, 'lint', 'test', ident)[0] == 0
+    assert outreach.current(lane, rh)[ident]['lint']['warnings'] == []
+
+
+def test_english_opening_fails_and_a_middle_english_line_only_warns(env):
+    root, lane = env
+    with_language(env)
+    english_open = 'Hi Beta, I hope you are well and that the work is going along nicely there.'
+    ident, _ = draft(env, '\n\n'.join([english_open, EN_SCIENCE, PT_SIGNOFF]), to='Contact Beta')
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'language:' in out and 'opening' in out
+
+    aside = 'By the way, I hope the move went well and that you are settled in by now.'
+    other, _ = draft(env, '\n\n'.join([PT_GREETING, aside, EN_SCIENCE, PT_SIGNOFF]), to='Contact Beta')
+    rc, out, _ = cli(root, 'lint', 'test', other)
+    assert rc == 0, 'a personal line in the middle is a warning, never a block'
+    assert 'WARN: ' in out and 'European Portuguese' in out
+    warnings = outreach.current(lane, rh)[other]['lint']['warnings']
+    assert len(warnings) == 1 and 'paragraph 2' in warnings[0]
+
+
+def test_english_recipient_keeps_the_old_behaviour(env):
+    """An unset language means English: a Portuguese draft to Alpha is not this rule's business."""
+    root, _ = env
+    ident, _ = draft(env, '\n\n'.join([PT_GREETING, PT_SCIENCE, PT_SIGNOFF]), to='Contact Alpha')
+    assert cli(root, 'lint', 'test', ident)[0] == 0
+
+
+def test_a_bad_language_code_is_reported_not_ignored(env):
+    root, _ = env
+    with_language(env, language='Portuguese please')
+    ident, _ = draft(env, '\n\n'.join([PT_GREETING, EN_SCIENCE, PT_SIGNOFF]), to='Contact Beta')
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'contact:' in out and 'language code' in out
+
+
+def test_recipient_language_reaches_the_science_checker(env):
+    root, _ = env
+    with_language(env)
+    (root / 'lanes/team').mkdir()
+    (root / 'lanes/team/OUTREACH.toml').write_text('question_limit = 2\nscience_checks = true\n')
+    ident, _ = draft(env, '\n\n'.join([PT_GREETING, EN_SCIENCE, PT_SIGNOFF, 'Is it useful or slop?']),
+                     to='Contact Beta', lane_name='team')
+    with patch.object(outreach, 'science_checks', return_value=[]) as check:
+        assert cli(root, 'lint', 'team', ident)[0] == 0
+    assert check.call_args.args[2] == 'pt'

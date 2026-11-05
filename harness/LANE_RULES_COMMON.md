@@ -22,6 +22,15 @@ and data, a stated open problem settled, a prediction tested on new data, or a s
 that is better than the one before it. Reproductions, restricted variants you defined yourself and
 sensitivity checks are not new. Say "no" plainly when it is no.
 
+**Email in two languages (Ricardo, 11-05).** When a recipient's contact record carries a
+language other than English, an email that reports results has a fixed shape: it **opens** in
+that language, carries the **results, numbers, methods, caveats, discussion and summary in
+English** because English is the science language, and **closes** in that language again.
+Attachments are always English. The shape holds even when the recipient writes their own
+science in English. `rh outreach lint` fails a non-Portuguese opening or closing, a Portuguese
+science paragraph and a Portuguese attachment; a personal line mid-email that drifts into
+English is a warning.
+
 **How this is enforced.** `lane-yield` reads that ledger on a schedule. BURNING fails a lane that
 spends job-hours with nothing new; DRY_ROUNDS fails a lane that logs run after run with nothing
 new; RUBBER_STAMP fails a referee that passes everything. A lane that stops logging reads as a lane

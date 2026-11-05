@@ -11,7 +11,7 @@ Use an isolated writable root with `python3 harness/rh.py --root PATH ...`. It c
 | `RH_ROLES_FILE` | Local generated roles/routes JSON; default `.runtime/roles.json`. |
 | `RH_AGENT_ALERTS` | Agent alert JSONL queue; default `.runtime/agent-alerts.jsonl`. |
 | `RH_NOTIFY_COMMAND` | Optional pod/provider notification executable and quoted arguments; no service supplied. |
-| `RH_CONTACTS` | Private contact file; default `.runtime/contacts.json`. See [outreach](outreach.md). |
+| `RH_CONTACTS` | Private contact file; default `.runtime/contacts.json`. Rows take a `name` and an optional `language` code such as `pt`. See [outreach](outreach.md). |
 | `RH_VOICE_COMMAND`, `RH_SCIENCE_CHECK_COMMAND` | Separately supplied lint commands. Missing required commands refuse lint. |
 | `RH_TRASH_COMMAND` | Reversible disposal adapter; default `/usr/bin/trash`. Linux deployments must supply a compatible Trash command. There is no destructive fallback. |
 | `RH_SSH_KEY`, `RH_KNOWN_HOSTS` | SSH identity and strict known-hosts file; defaults `.runtime/ssh/id_ed25519` and `.runtime/ssh/known_hosts`; set explicitly for an existing SSH setup. |

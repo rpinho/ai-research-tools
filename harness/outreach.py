@@ -1,5 +1,6 @@
 """Local outreach ledger and gates. This module never sends or fetches anything."""
 import settings
+import mixed_language
 import datetime as dt
 import contextlib
 import fcntl
@@ -78,6 +79,18 @@ def contact_key(name):
     if len(hits) != 1:
         raise ValueError('email recipient must uniquely match a name in private contacts.json')
     return hits[0]
+
+
+def contact_language(name):
+    """The recipient's `language` field from private contacts; None means English.
+
+    Unset is English, so an installation that never fills the field keeps its old behaviour.
+    """
+    contacts = json.loads(CONTACTS.read_text())
+    for row in contacts:
+        if row['name'].casefold() == name.casefold():
+            return mixed_language.code(row.get('language'))
+    return None
 
 
 def current(lane, rh):
@@ -172,10 +185,15 @@ def voice(text, channel):
         return ['xlint could not complete']
 
 
-def science_checks(text, attachments):
-    """Optional lane check: stdin JSON, stdout FAIL: lines, nonzero means refusal."""
+def science_checks(text, attachments, language=None):
+    """Optional lane check: stdin JSON, stdout FAIL: lines, nonzero means refusal.
+
+    `language` carries the recipient's contact language so an installation's own checker can
+    apply the mixed-language rule as well; a checker that ignores the field is unaffected.
+    """
     try:
-        run = subprocess.run(SCIENCE_COMMAND, input=json.dumps({'text': text, 'attachments': [str(p) for p in attachments]}),
+        run = subprocess.run(SCIENCE_COMMAND, input=json.dumps({'text': text, 'language': language,
+                                                                'attachments': [str(p) for p in attachments]}),
                              text=True, capture_output=True, timeout=30)
         errors = [line for line in run.stdout.splitlines() if line.startswith('FAIL:')]
         return errors or (['science checker could not complete'] if run.returncode else [])
@@ -350,7 +368,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
     peers.update({r['id']: r for r in selected})
     results = {}
     for row in selected:
-        checks = dict(voice=[], questions=[], batch=[], contact=[], collision=[], links=[], science=[])
+        checks = dict(voice=[], questions=[], batch=[], contact=[], collision=[], links=[], science=[], language=[])
         try:
             text = body(row)
         except (OSError, UnicodeError):
@@ -361,18 +379,30 @@ def lint_rows(lane, selected, rh, allow_collision=None):
         questions = URL.sub('', text).count('?')
         if questions > limit:
             checks['questions'].append('at most {} question(s); found {}'.format(limit, questions))
+        language = None
         if row['channel'] == 'email':
             try:
                 if contact_key(row['to_key']) != row['to_key']:
                     checks['contact'].append('to_key must be the canonical contacts name')
             except (OSError, ValueError, KeyError):
                 checks['contact'].append('recipient missing from private contacts.json')
+            else:
+                try:
+                    language = contact_language(row['to_key'])
+                except ValueError as error:
+                    checks['contact'].append(str(error))
+                except (OSError, KeyError):
+                    # An unreadable contacts file is the check above's business, not this one's.
+                    language = None
         for other in ([] if row['channel'] in X_PUBLIC else collisions(row, everyone, clock)):
             if not allow_collision:
                 checks['collision'].append('recent send: {}/{}'.format(other['lane'], other['id']))
         checks['links'] = link_errors(text)
+        # Mixed language: science in English, the personal lines in the recipient's language.
+        checks['language'], language_warnings = mixed_language.findings(
+            text, language if row['channel'] == 'email' else None, row.get('attachments', []))
         if cfg.get('science_checks', False) and row['channel'] == 'email':
-            checks['science'] = science_checks(text, row.get('attachments', []))
+            checks['science'] = science_checks(text, row.get('attachments', []), language)
         for other in ([] if row['channel'] == 'x_reply' else peers.values()):
             if other['id'] == row['id']:
                 continue
@@ -381,9 +411,10 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                     checks['batch'].append('pair {} / {}: {} Jaccard {:.3f}'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
                 checks['batch'].append('comparison draft unreadable: ' + other['id'])
-        warnings = []
+        warnings = list(language_warnings)
         if row['channel'] in X_PUBLIC:
-            checks['reach'], warnings = x_checks(row, text, everyone, clock, selected)
+            checks['reach'], reach_warnings = x_checks(row, text, everyone, clock, selected)
+            warnings += reach_warnings
         results[row['id']] = dict(warnings=warnings, ok=not any(checks.values()), utc=rh.now(), sha256=hashlib.sha256(text.encode('utf-8')).hexdigest(), checks=checks)
         if allow_collision:
             results[row['id']]['allow_collision'] = safe(allow_collision, 'collision reason')
