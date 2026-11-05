@@ -65,3 +65,14 @@ def command(key, default):
     if not args:
         raise ValueError(key + ': command must not be empty')
     return args
+
+
+def runpod_api_key():
+    """The RunPod key from its file first (RH_RUNPOD_KEY_FILE, default ~/.config/runpod/api_key),
+    then RUNPOD_API_KEY. A rotated key reaches every process through the file, while a process
+    started earlier still carries the old value in its environment. Never log the result."""
+    try:
+        key = path('RH_RUNPOD_KEY_FILE', Path('~/.config/runpod/api_key')).read_text().strip()
+    except OSError:
+        key = ''
+    return key or os.environ.get('RUNPOD_API_KEY', '').strip()

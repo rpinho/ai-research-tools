@@ -90,3 +90,17 @@ def test_intake_runs_declared_lanes_in_pinned_order(tmp_path, monkeypatch):
     assert intake_all.lanes() == ['a-lane', 'b-lane', 'c-lane']
     monkeypatch.setenv('RH_INTAKE_LANES', 'c-lane, outreach-only,missing,a-lane')
     assert intake_all.lanes() == ['c-lane', 'a-lane']
+
+
+def test_runpod_key_file_beats_stale_environment(tmp_path, monkeypatch):
+    import settings
+    key_file = tmp_path / 'api_key'
+    monkeypatch.setenv('RH_RUNPOD_KEY_FILE', str(key_file))
+    monkeypatch.setenv('RUNPOD_API_KEY', 'stale-from-env')
+    assert settings.runpod_api_key() == 'stale-from-env'
+    key_file.write_text('rotated-in-file\n')
+    assert settings.runpod_api_key() == 'rotated-in-file'
+    key_file.write_text('  \n')
+    assert settings.runpod_api_key() == 'stale-from-env'
+    monkeypatch.delenv('RUNPOD_API_KEY')
+    assert settings.runpod_api_key() == ''

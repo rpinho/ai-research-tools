@@ -1571,7 +1571,7 @@ def terminate_self():
     """
     import urllib.request
     pod_id = os.environ['RUNPOD_POD_ID']
-    api_key = os.environ['RUNPOD_API_KEY']
+    api_key = settings.runpod_api_key()
     if not re.fullmatch(r'[a-z0-9]+', pod_id) or not api_key:
         raise ValueError('pod termination environment unavailable')
     query = 'mutation { podTerminate(input:{podId:' + json.dumps(pod_id) + '}) }'
