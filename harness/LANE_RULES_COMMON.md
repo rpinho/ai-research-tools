@@ -23,13 +23,13 @@ that is better than the one before it. Reproductions, restricted variants you de
 sensitivity checks are not new. Say "no" plainly when it is no.
 
 **Email in two languages (Ricardo, 11-05).** When a recipient's contact record carries a
-language other than English, an email that reports results has a fixed shape: it **opens** in
-that language, carries the **results, numbers, methods, caveats, discussion and summary in
-English** because English is the science language, and **closes** in that language again.
-Attachments are always English. The shape holds even when the recipient writes their own
-science in English. `rh outreach lint` fails a non-Portuguese opening or closing, a Portuguese
-science paragraph and a Portuguese attachment; a personal line mid-email that drifts into
-English is a warning.
+language other than English, that language is the **default** for the whole email, and it
+**opens** and **closes** in it. **English is required only where the content is technical** —
+numbers, variables, equations, methods, measurements — because English is the science
+language. Attachments are always English. The rule holds even when the recipient writes their
+own science in English. `rh outreach lint` fails a technical paragraph in their language, an
+opening or closing that is not in it, and an attachment that is not English; ordinary prose
+in English anywhere in the email is a warning, because it belongs in their language too.
 
 **How this is enforced.** `lane-yield` reads that ledger on a schedule. BURNING fails a lane that
 spends job-hours with nothing new; DRY_ROUNDS fails a lane that logs run after run with nothing

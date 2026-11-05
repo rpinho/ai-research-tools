@@ -368,7 +368,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
     peers.update({r['id']: r for r in selected})
     results = {}
     for row in selected:
-        checks = dict(voice=[], questions=[], batch=[], contact=[], collision=[], links=[], science=[], language=[])
+        checks = dict(voice=[], questions=[], contact=[], collision=[], links=[], science=[], language=[])
         try:
             text = body(row)
         except (OSError, UnicodeError):
@@ -398,20 +398,27 @@ def lint_rows(lane, selected, rh, allow_collision=None):
             if not allow_collision:
                 checks['collision'].append('recent send: {}/{}'.format(other['lane'], other['id']))
         checks['links'] = link_errors(text)
-        # Mixed language: science in English, the personal lines in the recipient's language.
+        # Mixed language: the technical paragraphs in English, the rest in the recipient's own.
         checks['language'], language_warnings = mixed_language.findings(
             text, language if row['channel'] == 'email' else None, row.get('attachments', []))
         if cfg.get('science_checks', False) and row['channel'] == 'email':
             checks['science'] = science_checks(text, row.get('attachments', []), language)
+        # Two emails in a batch resembling each other is a warning, not a failure (Ricardo,
+        # 11-05): "I don't think anybody will be comparing emails. What's important is that it
+        # doesn't sound like AI slop and that it uses my voice." A shared closing is the usual
+        # cause, and the two-language rule makes a shared Portuguese closing likelier still, so
+        # this must never block recording or sending. The voice check is what guards slop.
+        batch_warnings = []
         for other in ([] if row['channel'] == 'x_reply' else peers.values()):
             if other['id'] == row['id']:
                 continue
             try:
                 for label, score in similarities(row, other):
-                    checks['batch'].append('pair {} / {}: {} Jaccard {:.3f}'.format(row['id'], other['id'], label, score))
+                    batch_warnings.append('pair {} / {}: {} Jaccard {:.3f}; vary it if it reads '
+                                          'as a template'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
-                checks['batch'].append('comparison draft unreadable: ' + other['id'])
-        warnings = list(language_warnings)
+                batch_warnings.append('comparison draft unreadable: ' + other['id'])
+        warnings = list(language_warnings) + batch_warnings
         if row['channel'] in X_PUBLIC:
             checks['reach'], reach_warnings = x_checks(row, text, everyone, clock, selected)
             warnings += reach_warnings
@@ -491,6 +498,7 @@ def arguments(sub):
                 p.add_argument('--message-id', required=True)
                 p.add_argument('--thread-id')
                 p.add_argument('--via', required=True, choices=('api', 'browser'))
+                p.add_argument('--utc', help='when it actually went out, when that was before now')
             elif action == 'reply':
                 p.add_argument('--summary', required=True)
             else:
@@ -616,7 +624,11 @@ def main(root, args, rh):
                 row.update(status='approved', approval=dict(utc=rh.now(), by='owner (standing approval)' if args.quote == STANDING_APPROVAL else 'owner (relayed)', quote=args.quote,
                                                            sha256=sha(row['draft_path'])))
             elif args.action == 'sent':
-                sent_at = time_of(rh.now())
+                # A send recorded after the fact keeps its real time, so the follow-up falls
+                # due from when the recipient got it rather than from the bookkeeping.
+                sent_at = time_of(args.utc) if args.utc else time_of(rh.now())
+                if sent_at > time_of(rh.now()):
+                    raise ValueError('--utc is in the future')
                 row.update(status='sent', sent=dict(utc=sent_at.isoformat(), message_id=safe(args.message_id, 'message id'), via=args.via),
                            follow_up_due=(sent_at + dt.timedelta(days=settings(lane, rh)['follow_up_days'])).isoformat())
                 if args.thread_id:

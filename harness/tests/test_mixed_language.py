@@ -84,15 +84,32 @@ def test_a_middle_personal_line_in_english_only_warns():
 
 
 @pytest.mark.parametrize('line', [
+    'A separate model re-checked the result, and no human has looked at it yet.',
+    'Is this useful to you, or is it just slop?',
+    'I can send you the scripts if you would rather run them yourself.',
     "I agree with all of it, and I won't call it an erratum.",
-    "On the arXiv note with a data record: I would like to add one.",
-    'The argument holds for the general case, which is the part worth saying out loud.',
 ])
-def test_english_discussion_in_the_middle_is_never_flagged(line):
-    """The rule puts discussion and summary in English with the numbers, so English prose in
-    the middle is right, not a lapse. Warning on it nagged at correct drafts (friends, 11-05).
+def test_english_prose_anywhere_warns_because_portuguese_is_the_default(line):
+    """Ricardo, 11-05: Portuguese is the default and English is required only where the
+    content is technical, so ordinary prose in the middle is a warning wherever it sits.
+    These are his own examples, generically worded. An earlier version of this file asserted
+    the opposite, after "discussion and summary" was read as part of the science block.
     """
-    assert ml.findings(email(GREETING_PT, line, SCIENCE_EN, SIGNOFF_PT), 'pt') == ([], [])
+    failures, warnings = ml.findings(email(GREETING_PT, line, SCIENCE_EN, SIGNOFF_PT), 'pt')
+    assert failures == []
+    assert len(warnings) == 1 and 'paragraph 2' in warnings[0] and 'Portuguese' in warnings[0]
+    # The same sentence in Portuguese is simply right.
+    assert ml.findings(email(GREETING_PT, 'Outro modelo voltou a verificar isto, e ainda '
+                             'ninguém olhou para o resultado.', SCIENCE_EN, SIGNOFF_PT),
+                       'pt') == ([], [])
+
+
+def test_a_technical_paragraph_needs_no_portuguese(env=None):
+    """English carries the numbers, so the technical middle is never warned about."""
+    assert ml.findings(email(GREETING_PT, SCIENCE_EN, SIGNOFF_PT), 'pt') == ([], [])
+    assert ml.is_technical('We ran an ablation on the holdout split and the ranking held.')
+    assert ml.is_technical('The field F054 ran to 10x the reference depth.')
+    assert not ml.is_technical('A separate model re-checked the result.')
 
 
 def test_an_all_english_email_with_numbers_in_one_paragraph_fails_the_shape():
@@ -100,16 +117,16 @@ def test_an_all_english_email_with_numbers_in_one_paragraph_fails_the_shape():
     assert len(failures) == 1 and 'own English paragraph' in failures[0]
 
 
-def test_a_personal_line_with_a_number_is_not_science():
-    """"obrigado pelos 20 minutos" must never fail as a Portuguese science block."""
+def test_a_personal_line_with_a_number_is_not_technical():
+    """"obrigado pelos 20 minutos" must never fail as a Portuguese technical block."""
     failures, warnings = ml.findings(email('Obrigado pelos 20 minutos de ontem, foi muito útil para nós.',
                                            SCIENCE_EN, SIGNOFF_PT), 'pt')
     assert failures == [] and warnings == []
 
 
-def test_statistics_make_a_paragraph_science_even_without_two_numbers():
+def test_statistics_make_a_paragraph_technical_even_without_two_numbers():
     text = 'A correlação é significativa (p < 0.01) e o desvio mantém-se igual entre as amostras.'
-    assert ml.is_science(text)
+    assert ml.is_technical(text)
     assert len(ml.findings(email(GREETING_PT, text, SIGNOFF_PT), 'pt')[0]) == 1
 
 
@@ -128,3 +145,21 @@ def test_unreadable_or_binary_attachments_are_left_alone(tmp_path):
     binary.write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 32)
     clean = email(GREETING_PT, SCIENCE_EN, SIGNOFF_PT)
     assert ml.findings(clean, 'pt', [missing, binary]) == ([], [])
+
+
+@pytest.mark.parametrize('line', [
+    'Podes ver se conseguem reproduzir isto antes de eu continuar com o resto.',
+    'Diz-me se é isso que procuravas ou se é apenas mais do mesmo.',
+    'Aparece quando quiseres, só se te apetecer, não é nada urgente.',
+])
+def test_the_portuguese_word_se_is_not_a_statistic(line):
+    """re.I made \\bSE\\b match the Portuguese conjunction "se", so an ordinary Portuguese
+    paragraph was read as results and failed for not being in English (friends, 11-05).
+    """
+    assert not ml.is_technical(line)
+    assert ml.findings(email(GREETING_PT, line, SCIENCE_EN, SIGNOFF_PT), 'pt') == ([], [])
+
+
+def test_uppercase_statistic_acronyms_still_count():
+    assert ml.is_technical('O erro está dentro do CI de 95% e o SD mantém-se.')
+    assert ml.is_technical('The spread is within the CI and the SD is unchanged.')

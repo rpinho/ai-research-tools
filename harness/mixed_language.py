@@ -1,17 +1,22 @@
 """Mixed-language rule for email to a recipient whose contact language is not English.
 
-Ricardo's rule (11-05): an email that carries results to a Portuguese-speaking recipient is
-written in two languages, and the shape is fixed. It opens in European Portuguese, carries its
-results, numbers, methods, caveats, discussion and summary in English because English is the
-science language, and closes in European Portuguese again. Attachments are English whatever
-the email does. The shape holds even for a recipient who writes their own science in English:
-there is no "match their language" exception.
+Ricardo's rule (11-05, as refined twice): an email to a Portuguese-speaking recipient is
+written in Portuguese. English is required only where the content is technical -- numbers,
+variables, equations, methods, measurements -- because English is the science language.
+Attachments are always English. The shape holds even for a recipient who writes their own
+science in English: there is no "match their language" exception.
 
-So three things fail: an opening that is not Portuguese, a closing that is not Portuguese, and
-a science paragraph that is Portuguese. The middle of the email is English by default, because
-that is where the discussion and the summary live as well as the numbers; a paragraph there is
-only warned about when it is plainly personal and written in English, and the shape the rule
-fixes is the opening and the close.
+So the opening and the closing must be Portuguese, a technical paragraph in Portuguese
+fails, and a non-technical paragraph in English is warned about wherever it appears. The
+middle of the email is not English by default: "a separate model re-checked it", "no human
+has looked at it yet", "is this useful or is it slop?" are ordinary prose and belong in
+Portuguese. An earlier version of this file had that backwards, after "discussion and
+summary" was read as part of the science block.
+
+Technical means digits beside result vocabulary, two or more numbers, a statistic, a maths
+symbol, a variable-like token, or a dense run of technical terms. Term vocabulary alone is
+not enough: "a separate model re-checked the result" uses two of those words and is still
+ordinary prose.
 
 Language identification here is a deliberately small offline heuristic. It counts function
 words that one language has and the other does not, plus letters that English does not use.
@@ -53,10 +58,19 @@ WORD = re.compile(r"[^\W\d_]+(?:['’-][^\W\d_]+)*", re.UNICODE)
 
 # A number that carries quantity, not a date or a list marker.
 NUMBER = re.compile(r'(?<![\w/-])[-+]?\d+(?:[.,]\d+)?(?![\w/-])')
-STATISTIC = re.compile(r'\b[rnp]\s*[=<>]|\bp\s*[=<>]|±|%|\bCI\b|\bSD\b|\bSE\b', re.I)
+STATISTIC = re.compile(r'\b[rnp]\s*[=<>]|±|%', re.I)
+# Case matters for these, and only for these: under re.I the Portuguese conjunction "se" --
+# "ver se conseguem", "só se te apetecer" -- matched \bSE\b, so any Portuguese paragraph
+# using it was read as a result and failed for not being in English (friends, 11-05).
+ACRONYM = re.compile(r'\b(?:CI|SD|SE|SEM|IQR|AUC|RMSE|MAE)\b')
+
+# A maths symbol, and a token carrying both letters and digits or an underscore: F054, k_eff,
+# run11, 10x. These make a paragraph technical on their own.
+MATH = re.compile(r'[=<>\u2264\u2265\u00b1\u00d7\u00f7\u2211\u221a\u2248\u2260]|\^\d|\$[^$\n]+\$')
+VARIABLE = re.compile(r'\b(?=\w*[^\W\d_])(?=\w*\d)\w{2,}\b|\b[^\W\d_]\w*_\w+\b')
 
 # Result and method vocabulary in both languages: a paragraph that argues about a measurement.
-SCIENCE_TERMS = frozenset('''
+TECHNICAL_TERMS = frozenset('''
     baseline control controls correlation dataset data estimate interval confidence
     measured measurement method methods median mean sample samples significance significant
     threshold replicate replicates predictor variance deviation noise spread ranking rank
@@ -66,21 +80,6 @@ SCIENCE_TERMS = frozenset('''
     media média mediana correlacao correlação amostra amostras controlo controle
     limiar intervalo confianca confiança desvio erro ruido ruído dados variancia variância
     hipotese hipótese ressalva ressalvas limitacao limitação conclusao conclusão
-'''.split())
-
-# Words that make a middle paragraph personal rather than part of the science: family, health,
-# travel, plans, well-wishing. The middle of the email is English by default, because the rule
-# puts the discussion and the summary there alongside the numbers, so a warning needs positive
-# evidence that a paragraph is personal. Without this, "I agree, and I won't call it an erratum"
-# -- discussion, correctly in English -- was warned for not being Portuguese (friends, 11-05).
-PERSONAL_WORDS = frozenset('''
-    family wife husband son daughter kids children baby holiday holidays vacation weekend
-    birthday congratulations wedding health hospital trip travel visit dinner lunch coffee
-    hope hopefully glad lovely great sorry miss catch wonderful summer winter christmas
-    familia família esposa marido filho filha filhos miudos miúdos bebe bebé ferias férias
-    feriado fim semana aniversario aniversário parabens parabéns casamento saude saúde
-    hospital viagem visita jantar almoco almoço cafe café espero contente otimo ótimo
-    pena saudades natal verao verão inverno
 '''.split())
 
 MIN_WORDS = 4  # Below this a paragraph is a salutation or a link, not prose to judge.
@@ -110,21 +109,25 @@ def language_of(text):
     return 'pt' if pt > en else 'en'
 
 
-def is_science(paragraph):
-    """True when the paragraph argues about a measurement rather than about the person.
+def is_technical(paragraph):
+    """True when the paragraph carries the measurement rather than talks about the work.
 
-    One stray number does not make a science paragraph: "obrigado pelos 20 minutos" is a
-    personal line. The test asks for a number next to result vocabulary, two numbers, or an
-    explicit statistic, so that a Portuguese personal line is never failed as science.
+    One stray number does not make it technical: "obrigado pelos 20 minutos" is an ordinary
+    line. Neither does the vocabulary on its own, or "a separate model re-checked the result"
+    would be technical when it is plain prose (Ricardo's example, 11-05). It takes a number
+    beside that vocabulary, two numbers, a statistic, a maths symbol, a variable-like token,
+    or a dense run of terms.
     """
+    found = words(paragraph)
     numbers = len(NUMBER.findall(paragraph))
-    terms = sum(w in SCIENCE_TERMS for w in words(paragraph))
-    return bool(STATISTIC.search(paragraph)) or numbers >= 2 or (numbers >= 1 and terms >= 1)
-
-
-def is_personal(paragraph):
-    """True when a middle paragraph is about the person, not about the work."""
-    return any(w in PERSONAL_WORDS for w in words(paragraph))
+    terms = sum(w in TECHNICAL_TERMS for w in found)
+    if STATISTIC.search(paragraph) or ACRONYM.search(paragraph):
+        return True
+    if MATH.search(paragraph) or VARIABLE.search(paragraph):
+        return True
+    if numbers >= 2 or (numbers >= 1 and terms >= 1):
+        return True
+    return terms >= 3 and terms / max(len(found), 1) >= 0.12
 
 
 def paragraphs(text):
@@ -177,18 +180,19 @@ def findings(text, language, attachments=()):
             if edge_language(paragraph) == 'en':
                 failures.append('paragraph {}: the {} must be in European Portuguese{}'.format(
                     number, 'opening' if index == 0 else 'closing',
-                    '; keep the numbers in their own English paragraph' if is_science(paragraph) else ''))
+                    '; keep the numbers in their own English paragraph'
+                    if is_technical(paragraph) else ''))
             continue
         if len(words(paragraph)) < MIN_WORDS:
             continue
         found = language_of(paragraph)
-        if is_science(paragraph):
+        if is_technical(paragraph):
             if found == 'pt':
-                failures.append('paragraph {}: results, numbers, methods and caveats go in '
+                failures.append('paragraph {}: numbers, variables, methods and results go in '
                                 'English, the science language'.format(number))
-        elif found == 'en' and is_personal(paragraph):
-            warnings.append('paragraph {}: a personal line reads better in European '
-                            'Portuguese'.format(number))
+        elif found == 'en':
+            warnings.append('paragraph {}: nothing technical here, so it reads better in '
+                            'European Portuguese'.format(number))
     for path in attachments:
         if language_of(attachment_text(path)) == 'pt':
             failures.append('attachment {}: attachments are always English'.format(Path(path).name))

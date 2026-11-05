@@ -130,12 +130,21 @@ def test_varied_batch_passes_every_check(env):
     assert out.count('PASS') == 8
 
 
-def test_identical_batch_reports_pairs(env):
+def test_identical_batch_warns_without_blocking(env):
+    """Ricardo, 11-05: "I don't think anybody will be comparing emails. What's important is
+    that it doesn't sound like AI slop and that it uses my voice." Two emails that resemble
+    each other are still reported, but as a warning, so a shared Portuguese closing -- which
+    the two-language rule makes likely -- can never block recording or sending.
+    """
     a, _ = draft(env, batch='same')
     b, _ = draft(env, to='Contact Beta', batch='same')
     rc, out, _ = cli(env[0], 'lint', 'test', '--batch', 'same')
-    assert rc == 1 and 'pair ' + a + ' / ' + b in out
+    assert rc == 0 and out.count('PASS') == 2
+    assert 'WARN: pair ' + a + ' / ' + b in out or 'WARN: pair ' + b + ' / ' + a in out
     assert 'body-5gram' in out and 'first Jaccard' in out and 'last Jaccard' in out
+    # Approval and the send receipt both go through, which is the point of the change.
+    assert cli(env[0], 'approve', 'test', a, '--quote', 'Send this one')[0] == 0
+    assert cli(env[0], 'sent', 'test', a, '--message-id', 'm1', '--via', 'browser')[0] == 0
 
 
 def test_recent_sends_compared_even_without_batch(env):
@@ -143,7 +152,23 @@ def test_recent_sends_compared_even_without_batch(env):
     assert cli(env[0], 'sent', 'test', ident, '--message-id', 'm', '--via', 'api')[0] == 0
     new, _ = draft(env, to='Contact Beta')
     rc, out, _ = cli(env[0], 'lint', 'test', new)
-    assert rc == 1 and 'pair ' + new + ' / ' + ident in out
+    assert rc == 0 and 'WARN: pair ' + new + ' / ' + ident in out
+
+
+def test_a_send_recorded_after_the_fact_keeps_its_real_time(env):
+    """An email that went out before the ledger caught up (friends, 11-05) is recorded at the
+    time it actually left, so the follow-up falls due from when the recipient got it.
+    """
+    ident, _ = approve(env)
+    earlier = '2026-11-05T18:13:00+00:00'
+    assert cli(env[0], 'sent', 'test', ident, '--message-id', 'd', '--via', 'api',
+               '--utc', '2099-01-01T00:00:00+00:00')[0] != 0, 'a send cannot be in the future'
+    rc, _, err = cli(env[0], 'sent', 'test', ident, '--message-id', 'abc', '--thread-id', 'thr',
+                     '--via', 'browser', '--utc', earlier)
+    assert rc == 0, err
+    row = outreach.current(env[1], rh)[ident]
+    assert row['sent']['utc'] == earlier and row['sent']['thread_id'] == 'thr'
+    assert row['follow_up_due'] > earlier
 
 
 def test_old_sends_not_compared(env):
