@@ -13,6 +13,8 @@ Printed: C = 1.2345, Table 2 of https://arxiv.org/abs/2601.00001 (their paper)
 Ours: C = 1.2350
 Standard method: the paper's own LP, same constraints
 Deviations: none
+Cited by: 7 papers since 2026 (OpenAlex W1, checked 2026-11-04); closest: none on this table
+Kind: value
 """
 
 
@@ -71,3 +73,22 @@ def test_cli_exit_codes(tmp_path):
     assert subprocess.run(cli, capture_output=True).returncode == 0
     (tmp_path / 'CLAIM.md').write_text('no header\n')
     assert subprocess.run(cli, capture_output=True).returncode == 1
+
+
+def test_new_yes_needs_forward_citation_check(tmp_path):
+    (tmp_path / 'CLAIM.md').write_text(GOOD.replace('Cited by: 7 papers since 2026 (OpenAlex W1, checked 2026-11-04); closest: none on this table\n', ''))
+    assert any('Cited by' in e for e in lint(tmp_path))
+    (tmp_path / 'CLAIM.md').write_text(GOOD.replace('closest: none on this table', 'closest: <title, or none>'))
+    assert any('Cited by' in e for e in lint(tmp_path))
+
+
+def test_new_yes_needs_a_kind_from_the_scale(tmp_path):
+    (tmp_path / 'CLAIM.md').write_text(GOOD.replace('Kind: value', 'Kind: earth-shattering'))
+    assert any('Kind' in e for e in lint(tmp_path))
+    (tmp_path / 'CLAIM.md').write_text(GOOD.replace('Kind: value', 'Kind: conjecture (Conjecture 3.7)'))
+    assert lint(tmp_path) == []
+
+
+def test_new_no_needs_no_citation_check(tmp_path):
+    (tmp_path / 'CLAIM.md').write_text('NEW: no\nStandard method: rerun\nDeviations: none\n')
+    assert lint(tmp_path) == []

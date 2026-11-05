@@ -13,7 +13,7 @@ def write_log(p, hours):
 
 def claim(d, new, verdict, when):
     d.mkdir(parents=True)
-    head = ('NEW: yes\nPrinted: 1.0 in https://arxiv.org/abs/2601.00001\nOurs: 1.1\n' if new else 'NEW: no\n')
+    head = ('NEW: yes\nPrinted: 1.0 in https://arxiv.org/abs/2601.00001\nOurs: 1.1\nCited by: 0 papers since 2026 (OpenAlex W1, checked 2026-11-04); closest: none\nKind: value\n' if new else 'NEW: no\n')
     (d / 'CLAIM.md').write_text(head + 'Standard method: x\nDeviations: none\n')
     (d / 'VERDICT.md').write_text(verdict + '\n')
     os.utime(d / 'VERDICT.md', (when, when))

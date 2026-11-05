@@ -9,6 +9,11 @@ A claim directory holds CLAIM.md (or RESULT.md). The lint enforces three rules (
    `Deviations:` line that is `none` or says where the standard method failed (`standard failed: ...`).
 3. Baselines before predictive claims. If the claim reports a predictive metric, BASELINES.json must give the
    trivial, simple and method scores on the same split, and its `sbs` must match tools/sbs/sbs.py.
+4. Scooped and scale. A `yes` needs a `Cited by:` line from the forward-citation check (tools/cited-by): the
+   citing-paper count, the paper's year and the closest citing paper or `none`. Old, well-cited papers are where
+   someone else got there first. And a `Kind:` line from a fixed scale, so nobody has to guess how big it is:
+   rerun (better settings or restarts of the paper's own method), value (a printed number improved or proved
+   optimal), question (a question the paper states, settled), conjecture (a stated conjecture proved or refuted).
 
 Exit 0 = PASS, 1 = FAIL (reasons printed), 2 = usage error. `--new-only` also fails a well-formed `NEW: no`,
 so a loop can skip refereeing claims that say they found nothing new.
@@ -22,6 +27,8 @@ from sbs import sbs  # noqa: E402
 METRIC = re.compile(r'\b(AUROC|AUPRC|ROC[- ]AUC|AUC|accuracy|balanced accuracy|F1|RMSE|MAE|MSE|R\^?2|R²|'
                     r'Spearman|Pearson|correlation|mAP|log[- ]loss|top-\d)\b', re.I)
 LOWER = re.compile(r'\b(RMSE|MAE|MSE|log[- ]loss|error|loss)\b', re.I)
+KINDS = ('rerun', 'value', 'question', 'conjecture')
+CITED = re.compile(r'\b\d+\b.*\b(19|20)\d{2}\b.*closest\s*:\s*\S', re.I)
 SOURCE = re.compile(r'(doi\.org/|\b10\.\d{4,9}/|arxiv\.org/|arXiv:?\s*\d{4}\.\d{4,5}|https?://)', re.I)
 
 
@@ -50,6 +57,12 @@ def lint(d, new_only=False):
             errs.append('NEW: yes needs a "Printed:" line with the printed number or open question and its DOI/arXiv/URL')
         if not ours:
             errs.append('NEW: yes needs an "Ours:" line')
+        cited, kind = field(text, 'Cited by'), field(text, 'Kind')
+        if not cited or not CITED.search(cited) or '<title' in cited:
+            errs.append('NEW: yes needs "Cited by: N papers since YEAR (source, date); closest: <title or none>" '
+                        'from tools/cited-by/cited_by.py')
+        if not kind or kind.split()[0].lower().strip('.,;:') not in KINDS:
+            errs.append(f'NEW: yes needs "Kind:" one of {", ".join(KINDS)}')
     if new is False and new_only:
         errs.append('NEW: no (nothing new, so nothing to referee)')
     std, dev = field(text, 'Standard method'), field(text, 'Deviations')
