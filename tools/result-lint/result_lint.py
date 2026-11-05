@@ -13,7 +13,10 @@ A claim directory holds CLAIM.md (or RESULT.md). The lint enforces three rules (
    citing-paper count, the paper's year and the closest citing paper or `none`. Old, well-cited papers are where
    someone else got there first. And a `Kind:` line from a fixed scale, so nobody has to guess how big it is:
    rerun (better settings or restarts of the paper's own method), value (a printed number improved or proved
-   optimal), question (a question the paper states, settled), conjecture (a stated conjecture proved or refuted).
+   optimal), question (a question the paper states, settled), conjecture (a stated conjecture proved or refuted),
+   note (a new result that builds on the source: a new question, new data or a new method, written up as NOTE.md).
+5. A note is a small paper. `Kind: note` replaces `Printed:` with `Builds on:` (the source, with its link) and
+   needs a NOTE.md next to the claim, plus a `Prior art:` line saying what the closest published work does.
 
 Exit 0 = PASS, 1 = FAIL (reasons printed), 2 = usage error. `--new-only` also fails a well-formed `NEW: no`,
 so a loop can skip refereeing claims that say they found nothing new.
@@ -27,7 +30,7 @@ from sbs import sbs  # noqa: E402
 METRIC = re.compile(r'\b(AUROC|AUPRC|ROC[- ]AUC|AUC|accuracy|balanced accuracy|F1|RMSE|MAE|MSE|R\^?2|R²|'
                     r'Spearman|Pearson|correlation|mAP|log[- ]loss|top-\d)\b', re.I)
 LOWER = re.compile(r'\b(RMSE|MAE|MSE|log[- ]loss|error|loss)\b', re.I)
-KINDS = ('rerun', 'value', 'question', 'conjecture')
+KINDS = ('rerun', 'value', 'question', 'conjecture', 'note')
 CITED = re.compile(r'\b\d+\b.*\b(19|20)\d{2}\b.*closest\s*:\s*\S', re.I)
 SOURCE = re.compile(r'(doi\.org/|\b10\.\d{4,9}/|arxiv\.org/|arXiv:?\s*\d{4}\.\d{4,5}|https?://)', re.I)
 
@@ -51,9 +54,19 @@ def lint(d, new_only=False):
         new = None
     else:
         new = m.group(1).lower() == 'yes'
+    kind = (field(text, 'Kind') or '').split()
+    is_note = bool(kind) and kind[0].lower().strip('.,;:') == 'note'
     if new:
         printed, ours = field(text, 'Printed'), field(text, 'Ours')
-        if not printed or not SOURCE.search(printed):
+        if is_note:
+            base = field(text, 'Builds on')
+            if not base or not SOURCE.search(base):
+                errs.append('Kind: note needs a "Builds on:" line with the source paper and its DOI/arXiv/URL')
+            if not (d / 'NOTE.md').is_file():
+                errs.append('Kind: note needs NOTE.md (the short paper) next to CLAIM.md')
+            if not field(text, 'Prior art'):
+                errs.append('Kind: note needs a "Prior art:" line: what the closest published work does')
+        elif not printed or not SOURCE.search(printed):
             errs.append('NEW: yes needs a "Printed:" line with the printed number or open question and its DOI/arXiv/URL')
         if not ours:
             errs.append('NEW: yes needs an "Ours:" line')

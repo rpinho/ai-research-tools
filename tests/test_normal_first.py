@@ -92,3 +92,23 @@ def test_new_yes_needs_a_kind_from_the_scale(tmp_path):
 def test_new_no_needs_no_citation_check(tmp_path):
     (tmp_path / 'CLAIM.md').write_text('NEW: no\nStandard method: rerun\nDeviations: none\n')
     assert lint(tmp_path) == []
+
+
+NOTE = """NEW: yes
+Kind: note
+Builds on: Irimia and Roy 2008, https://doi.org/10.1371/journal.pgen.1000148
+Ours: a new estimate on 40 more genomes
+Prior art: closest is X 2015, which used 12 genomes
+Standard method: the paper's own parsimony count
+Deviations: none
+Cited by: 85 papers since 2008 (OpenAlex W1, checked 2026-11-04); closest: X 2015
+"""
+
+
+def test_note_needs_builds_on_note_file_and_prior_art(tmp_path):
+    (tmp_path / 'CLAIM.md').write_text(NOTE)
+    assert any('NOTE.md' in e for e in lint(tmp_path))
+    (tmp_path / 'NOTE.md').write_text('# A note\n')
+    assert lint(tmp_path) == []
+    (tmp_path / 'CLAIM.md').write_text(NOTE.replace('Prior art: closest is X 2015, which used 12 genomes\n', ''))
+    assert any('Prior art' in e for e in lint(tmp_path))
