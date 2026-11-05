@@ -11,6 +11,7 @@ Use independent sealed selection; this repo ships code and synthetic examples.
 Wake the conductor through scripts, never peer messages: [conductor inbox](docs/conductor-inbox.md).
 Lanes that go quiet get a scheduled resume prompt, not a reminder in prose: [lane nudge](docs/lane-nudge.md).
 Lanes that spend without finding anything new, or whose referee passes everything, fail a scheduled test and stop: [lane yield](docs/lane-yield.md).
+The installed copy comes only from committed repo code; never edit it in place. Host paths go in a local env file: [harness sync](docs/harness-sync.md).
 
 ## Set up and run
 

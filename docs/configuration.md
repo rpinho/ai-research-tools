@@ -41,6 +41,10 @@ provider-specific config directories before invocation.
 | `LAUNCH_CLAUDE`, `LAUNCH_CLAUDE_BUDGET` | Claude executable and per-run dollar cap (default `1.00`); no automatic Claude retries. |
 | `RH_POD_GATE_CONFIG`, `RH_POD_GATE_AUDIT` | Capacity policy (default `$RH_ROOT/pod-gate.json`) and audit log (default `$RH_ROOT/.runtime/pod-gate-audit.jsonl`). |
 | `RH_HARVEST_STATE` | Snapshot state override; default `<root>/.harvest-state`. |
+| `RH_ENV_FILE` | Host env file of `KEY=VALUE` lines read once at import; default `$XDG_CONFIG_HOME/research-harness/env` (else `~/.config/...`). The real environment wins. Keep host paths here, never in the repo. See [harness sync](harness-sync.md). |
+| `RH_DISK_FLOOR_BYTES` | Free bytes required before a full harvest snapshot; default 12 GB. |
+| `RH_OWNER_ALIASES` | Comma-separated older names for the operator, accepted as an idea `source_type` and as a lint-exception `decided_by`; empty by default. |
+| `RH_INTAKE_LANES` | Comma-separated lanes the scheduled intake runs, in order; default every lane with an `INTAKE.toml`, alphabetically. |
 | `RH_OUTREACH_ROOT` | Approval hook's ledger root; default repo `.runtime`. |
 | `RH_ANSWERS_FILE` | Optional local answers file; default `.runtime/ANSWERS.md`; CLI `--answers-file` overrides it. |
 | `RH_TRANSCRIPTS_ROOT` | Explicit Claude project-transcript tree for session-model detection; disabled when unset. |
