@@ -31,6 +31,15 @@ import os
 from pathlib import Path
 import re
 
+# The gate names, in lane-yield's style, so a failure is greppable and quotable:
+#   CLAIMS_REQUIRED         a lane that always reports results named no claim
+#   RECHECK_LEDGER_MISSING  no re-check ledger is configured or found
+#   CLAIM_MISSING           the claim directory is not there
+#   RECHECK_MISSING         no separate model re-checked this claim
+#   RECHECK_FAILED          the independent re-run did not reproduce it
+#   RECHECK_DROPPED         the independent re-check dropped the claim
+#   POD_EVIDENCE_STALE      pod-touched evidence last re-checked before the host incident
+#   POD_EVIDENCE_UNDATED    pod-touched, and no incident configured to date it against (warning)
 RECHECK_LEDGER = 'RECHECK.csv'
 ID = 'id'
 RERUN = 'rerun'
@@ -116,8 +125,8 @@ def findings(claims, patterns, incident=None, require=False):
     claims = [str(c) for c in claims or ()]
     if not claims:
         if require:
-            failures.append('name the claims this reports with --claim: a result is sendable '
-                            'only once a separate model has rebuilt it')
+            failures.append('CLAIMS_REQUIRED: name the claims this reports with --claim; a result '
+                            'is sendable only once a separate model has rebuilt it')
         return failures, warnings
     cutoff = None
     if incident:
@@ -127,27 +136,30 @@ def findings(claims, patterns, incident=None, require=False):
         cutoff = aware(parsed)
     ledgers = recheck_rows(patterns)
     if not ledgers:
-        failures.append('no re-check ledger found: set recheck_roots to the directories '
-                        'holding {} and re-check before sending'.format(RECHECK_LEDGER))
+        failures.append('RECHECK_LEDGER_MISSING: set recheck_roots to the directories holding '
+                        '{} and re-check before sending'.format(RECHECK_LEDGER))
         return failures, warnings
     for claim in claims:
         name = claim_id(claim)
         if not Path(claim).is_dir():
-            failures.append('claim {}: directory missing'.format(name))
+            failures.append('CLAIM_MISSING claim {}: directory missing'.format(name))
             continue
         found = ledgers.get(name)
         if not found:
-            failures.append('claim {}: no independent re-check recorded; a separate model must '
-                            'rebuild it from the public inputs with its own code'.format(name))
+            failures.append('RECHECK_MISSING claim {}: no independent re-check recorded; a '
+                            'separate model must rebuild it from the public inputs with its own '
+                            'code'.format(name))
             continue
         matched = [entry for entry in found if value_in(entry[0], RERUN, MATCHED)]
         if not matched:
-            failures.append('claim {}: the independent re-run did not reproduce it ({}={})'.format(
+            failures.append('RECHECK_FAILED claim {}: the independent re-run did not reproduce '
+                            'it ({}={})'.format(
                 name, RERUN, ', '.join(sorted({(e[0].get(RERUN) or 'blank').strip() for e in found}))))
             continue
         survived = [entry for entry in matched if value_in(entry[0], VERDICT, SURVIVED)]
         if not survived:
-            failures.append('claim {}: the independent re-check dropped it ({}={})'.format(
+            failures.append('RECHECK_DROPPED claim {}: the independent re-check dropped it '
+                            '({}={})'.format(
                 name, VERDICT, ', '.join(sorted({(e[0].get(VERDICT) or 'blank').strip() for e in matched}))))
             continue
         markers = pod_markers(claim)
@@ -156,11 +168,13 @@ def findings(claims, patterns, incident=None, require=False):
             if not after:
                 newest = max(survived, key=lambda entry: entry[1])
                 failures.append(
-                    'claim {}: evidence was produced on a pod ({}) and its re-check is dated '
+                    'POD_EVIDENCE_STALE claim {}: evidence was produced on a pod ({}) and its '
+                    're-check is dated '
                     '{} by {}, before the host incident at {}; re-run it somewhere trusted'.format(
                         name, markers[0], newest[1].isoformat(), newest[2], cutoff.isoformat()))
         elif markers and not cutoff:
-            warnings.append('claim {}: evidence was produced on a pod ({}); no host incident is '
-                            'configured, so nothing checks when it was last re-run'.format(
+            warnings.append('POD_EVIDENCE_UNDATED claim {}: evidence was produced on a pod '
+                            '({}); no host incident is configured, so nothing checks when it was '
+                            'last re-run'.format(
                                 name, markers[0]))
     return failures, warnings

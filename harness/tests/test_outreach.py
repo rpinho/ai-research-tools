@@ -485,7 +485,7 @@ def test_lint_fails_a_result_email_whose_claim_was_never_independently_rechecked
     ident, _ = draft(env, claim=str(other))
     rc, out, _ = cli(root, 'lint', 'test', ident)
     assert rc == 1 and 'FAIL' in out
-    assert 'evidence: claim alpha_A002' in out and 'no independent re-check recorded' in out
+    assert 'evidence: RECHECK_MISSING claim alpha_A002' in out
     assert outreach.current(env[1], rh)[ident]['status'] == 'drafted'
     assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] != 0
 

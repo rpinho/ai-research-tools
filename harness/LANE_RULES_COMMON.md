@@ -39,8 +39,9 @@ same answer**, and that re-check is recorded. Two of thirteen claims did not sur
 compromised, and becomes evidence again only once it has been **re-run after the incident**
 somewhere trusted, with the re-run recorded. `rh outreach lint` fails an email whose claim
 has no recorded independent re-check, whose re-run did not reproduce it, whose re-check
-dropped it, or whose pod-touched evidence was last re-checked before the configured incident.
-Name the claims a draft reports with `rh outreach draft --claim DIR`.
+dropped it, or whose pod-touched evidence was last re-checked before the configured incident:
+`RECHECK_MISSING`, `RECHECK_FAILED`, `RECHECK_DROPPED`, `POD_EVIDENCE_STALE`. Name the claims a
+draft reports with `rh outreach draft --claim DIR`.
 
 **How this is enforced.** `lane-yield` reads that ledger on a schedule. BURNING fails a lane that
 spends job-hours with nothing new; DRY_ROUNDS fails a lane that logs run after run with nothing

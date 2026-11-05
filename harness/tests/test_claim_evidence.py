@@ -66,7 +66,8 @@ def test_a_claim_with_no_independent_recheck_fails(tmp_path):
     failures, warnings = ce.findings([first, second], [str(root)], INCIDENT)
     assert warnings == []
     assert len(failures) == 1
-    assert 'alpha_A002' in failures[0] and 'no independent re-check recorded' in failures[0]
+    assert failures[0].startswith('RECHECK_MISSING claim alpha_A002:')
+    assert 'no independent re-check recorded' in failures[0]
     assert 'separate model' in failures[0], 'the message says what would fix it'
 
 
@@ -84,8 +85,8 @@ def test_a_recheck_that_did_not_reproduce_or_that_dropped_the_claim_fails(tmp_pa
                              row('alpha_A004', verdict='DROP')])
     failures, _ = ce.findings([one, two], [str(root)], INCIDENT)
     assert len(failures) == 2
-    assert 'did not reproduce' in failures[0] and 'differs' in failures[0]
-    assert 'dropped it' in failures[1] and 'DROP' in failures[1]
+    assert failures[0].startswith('RECHECK_FAILED') and 'differs' in failures[0]
+    assert failures[1].startswith('RECHECK_DROPPED') and 'DROP' in failures[1]
 
 
 def test_several_recheck_roots_are_read_and_a_missing_claim_directory_fails(tmp_path):
@@ -95,7 +96,7 @@ def test_several_recheck_roots_are_read_and_a_missing_claim_directory_fails(tmp_
     assert ce.findings([one, two], [str(first), str(second)], INCIDENT) == ([], [])
     gone = tmp_path / 'claims' / 'alpha_A999'
     failures, _ = ce.findings([gone], [str(first), str(second)], INCIDENT)
-    assert len(failures) == 1 and 'directory missing' in failures[0]
+    assert len(failures) == 1 and failures[0].startswith('CLAIM_MISSING')
 
 
 def test_roots_may_be_globs_and_a_missing_ledger_fails_closed(tmp_path):
@@ -103,7 +104,7 @@ def test_roots_may_be_globs_and_a_missing_ledger_fails_closed(tmp_path):
     ledger(tmp_path, [row('alpha_A006')], root='recheck_1105')
     assert ce.findings([one], [str(tmp_path / 'recheck_*')], INCIDENT) == ([], [])
     failures, _ = ce.findings([one], [str(tmp_path / 'nothing_here_*')], INCIDENT)
-    assert len(failures) == 1 and 'no re-check ledger found' in failures[0]
+    assert len(failures) == 1 and failures[0].startswith('RECHECK_LEDGER_MISSING')
 
 
 # --- Gate 2: pod-touched evidence, re-run after the incident -------------------------------
@@ -119,7 +120,7 @@ def test_pod_touched_evidence_rechecked_before_the_incident_fails(tmp_path):
     failures, warnings = ce.findings([one], [str(root)], INCIDENT)
     assert warnings == []
     assert len(failures) == 1
-    assert 'produced on a pod' in failures[0] and 'pod_run.sh' in failures[0]
+    assert failures[0].startswith('POD_EVIDENCE_STALE') and 'pod_run.sh' in failures[0]
     assert 'before the host incident' in failures[0] and INCIDENT in failures[0]
     assert 're-run it somewhere trusted' in failures[0]
 
@@ -154,7 +155,8 @@ def test_without_a_configured_incident_pod_evidence_only_warns(tmp_path):
     root = ledger(tmp_path, [row('alpha_A011')], when=BEFORE)
     failures, warnings = ce.findings([one], [str(root)], None)
     assert failures == []
-    assert len(warnings) == 1 and 'no host incident is configured' in warnings[0]
+    assert len(warnings) == 1 and warnings[0].startswith('POD_EVIDENCE_UNDATED')
+    assert 'no host incident is configured' in warnings[0]
 
 
 def test_a_malformed_incident_time_is_refused_rather_than_ignored(tmp_path):
@@ -169,7 +171,7 @@ def test_a_malformed_incident_time_is_refused_rather_than_ignored(tmp_path):
 def test_a_lane_can_require_that_a_result_email_names_its_claims(tmp_path):
     root = ledger(tmp_path, [row('alpha_A013')])
     failures, _ = ce.findings([], [str(root)], INCIDENT, require=True)
-    assert len(failures) == 1 and '--claim' in failures[0]
+    assert len(failures) == 1 and failures[0].startswith('CLAIMS_REQUIRED') and '--claim' in failures[0]
     assert ce.findings([], [str(root)], INCIDENT, require=False) == ([], [])
 
 
