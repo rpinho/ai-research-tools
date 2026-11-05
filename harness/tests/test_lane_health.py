@@ -219,15 +219,17 @@ class LaneHealthTests(unittest.TestCase):
         self.assertEqual(before,self.snapshot(self.root/'lanes'))
         self.assert_private()
 
-    def test_scheduler_checks_disabled_lane_and_keeps_existing_pod_actions(self):
+    def test_scheduler_checks_disabled_lane_and_dispatches_independent_maintenance(self):
         self.config()
         args=rh.parser().parse_args(['pods','check'])
         with patch.object(pods,'registry',return_value=[]), patch.object(pods,'check',return_value=0) as check,\
-             patch.object(pods.harvest,'run',return_value=0) as harvest, patch.object(pods,'reap',return_value=0) as reap:
+             patch.object(pods.harvest,'run',return_value=0) as harvest, patch.object(pods,'reap',return_value=0) as reap,\
+             patch.object(pods.pod_maintenance,'schedule',return_value=0) as schedule:
             self.assertEqual(pods.main(self.root,args,rh),1)
-        check.assert_called_once()
-        harvest.assert_called_once()
-        reap.assert_called_once()
+        schedule.assert_called_once_with(self.root.resolve(), [])
+        check.assert_not_called()
+        harvest.assert_not_called()
+        reap.assert_not_called()
         self.assertEqual(self.push.call_count,2)
 
     def test_monitor_does_not_take_lane_lock_and_alert_lock_is_nonblocking(self):

@@ -14,7 +14,10 @@ import subprocess
 import uuid
 
 
-# Lane-health alerts belong to the agent responsible for recovery.
+# Lane-health alerts belong to the agent responsible for recovery: they go to the AGENT
+# queue, never to an operator's phone. A stalled lane is an agent's job to fix, not a
+# notification for a human to read and ignore. Operator pushes are reserved for what only
+# a human can act on (money, a decision, a deadline).
 AGENT_QUEUE = Path('.runtime/agent-alerts.jsonl')
 
 
@@ -39,6 +42,35 @@ def push(message):
         with AGENT_QUEUE.open('a') as stream:
             fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
             stream.write(row + chr(10))
+            stream.flush()
+            os.fsync(stream.fileno())
+        return True
+    except OSError:
+        return False
+
+
+def pod_alert(root, row):
+    """Wake the owning agents through both durable routes; never phone pushes.
+
+    A receipt is committed by the caller only after both writes succeed. A
+    failed queue append therefore retries on the next sample.
+    """
+    if (row.get('kind') not in ('pod-idle', 'pod-stalled')
+            or not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', row.get('lane', ''))
+            or not re.fullmatch(r'[a-z0-9][a-z0-9_-]*', row.get('pod', ''))
+            or not re.fullmatch(r'[a-z0-9]+', row.get('pod_id', ''))
+            or row.get('for') != 'agents'):
+        raise ValueError('invalid pod alert routing metadata')
+    try:
+        target = root / 'lanes' / row['lane'] / 'alerts' / (row['kind'] + '-' + row['pod'])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        text = json.dumps(row, sort_keys=True) + '\n'
+        write(target, text)
+        queue = queue_path()
+        queue.parent.mkdir(parents=True, exist_ok=True)
+        with queue.open('a') as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            stream.write(text)
             stream.flush()
             os.fsync(stream.fileno())
         return True

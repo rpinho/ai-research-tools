@@ -292,14 +292,14 @@ def test_broken_config_is_dry_run(tmp_path, config):
     assert pods.reap_mode(tmp_path, '2026-11-03T00:00:00Z') == 'dry-run'
 
 
-def test_check_runs_reaper_even_when_periodic_harvest_failed(env, monkeypatch):
+def test_maintenance_runs_reaper_even_when_periodic_harvest_failed(env, monkeypatch):
     e = env
     order = []
     monkeypatch.setattr(pods, 'check', lambda *a: order.append('check') or 0)
-    monkeypatch.setattr(harvest, 'run', lambda *a: order.append('periodic-harvest') or 1)
+    monkeypatch.setattr(harvest, 'run', lambda *a, **k: order.append('periodic-harvest') or 1)
     monkeypatch.setattr(pods, 'reap', lambda *a, **k: order.append('reap') or 0)
-    assert rh.main(['--root', str(e.root), 'pods', 'check']) == 1
-    assert order == ['check', 'periodic-harvest', 'reap']
+    assert rh.main(['--root', str(e.root), 'pods', 'maintain', e.pod['name'], '--pod-id', e.pod['pod_id']]) == 1
+    assert order == ['periodic-harvest', 'reap']
 
 
 def test_push_failure_retries_and_pushes_only_name(env):
@@ -637,7 +637,7 @@ def test_done_file_dry_run_reuses_final_harvest_without_shutdown(done_env):
     assert harvest.rows(e.root / 'POD_REAP.jsonl')[-1]['event'] == 'WOULD_REAP'
 
 
-def test_unknown_owner_alert_after_60m_throttles_disk_write_and_push(env):
+def test_unknown_owner_alert_after_60m_is_local_and_preserves_diagnostic_throttle(env):
     e = env
     e.pod.pop('work_queue')
     (e.root / 'pods.json').write_text(json.dumps([e.pod]))
@@ -649,19 +649,16 @@ def test_unknown_owner_alert_after_60m_throttles_disk_write_and_push(env):
     observe(e, dry_run=True)
     assert path.read_text() == 'empty\n'
     first_mtime = path.stat().st_mtime_ns
-    assert e.push.call_count == 1
-    # A restarted invocation reads the durable receipt. Another 5h45 is quiet.
+    # The independent sampler supplies both agent routes every 30 minutes.
+    # Legacy reaper diagnostics neither push to the operator nor duplicate those wakes.
     for _ in range(23):
         advance(e, 15)
         observe(e, dry_run=True)
         assert path.stat().st_mtime_ns == first_mtime
-        assert e.push.call_count == 1
-    advance(e, 15)  # exactly six hours since the first alert
+    advance(e, 15)
     observe(e, dry_run=True)
     assert path.stat().st_mtime_ns != first_mtime
-    assert e.push.call_count == 2
-    for call in e.push.call_args_list:
-        assert call.args[0][1:] == ['empty', 'Pod idle']
+    e.push.assert_not_called()
     e.final.assert_not_called()
     e.dispatch.assert_not_called()
     assert len(pods.registry(e.root)) == 1
@@ -697,21 +694,18 @@ def test_unknown_owner_idle_alert_evidence_resets(env, reset):
     e.dispatch.assert_not_called()
 
 
-def test_idle_alert_failed_push_retries_without_rewriting_alert(env):
+def test_legacy_idle_diagnostic_throttles_by_identity_without_phone_push(env):
     e = env
-    e.push.return_value = SimpleNamespace(returncode=1)
     pods.reap_alert(e.root, e.pod, 'idle', now=e.clock.now())
     path = e.root / 'alerts/pod-idle-empty'
     mtime = path.stat().st_mtime_ns
     advance(e, 15)
-    e.push.return_value = SimpleNamespace(returncode=0)
     pods.reap_alert(e.root, e.pod, 'idle', now=e.clock.now())
-    pods.reap_alert(e.root, e.pod, 'idle', now=e.clock.now())
-    assert e.push.call_count == 2
     assert path.stat().st_mtime_ns == mtime
-    # Reused names with a new pod identity do not inherit the old throttle.
+    # Reused names with a new identity do not inherit the diagnostic throttle.
     pods.reap_alert(e.root, dict(e.pod, pod_id='replacement'), 'idle', now=e.clock.now())
-    assert e.push.call_count == 3
+    assert json.loads((e.root / 'alerts/pod-idle-empty.throttle').read_text())['pod_id'] == 'replacement'
+    e.push.assert_not_called()
 
 
 @pytest.mark.parametrize('value', ['done-file:/workspace/HARNESS_DONE', 'harness',

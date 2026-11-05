@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -22,6 +23,13 @@ CHANNELS = ('email', 'x_reply', 'x_post', 'x_dm', 'linkedin')
 EMAIL = re.compile(r'[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}')
 URL = re.compile(r'\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s<>]+|\bwww\.[^\s<>]+')
 UTC = dt.timezone.utc
+REPLIED = settings.path('RH_X_REPLIED', Path('.runtime/x-replied.json'))
+STANDING_APPROVAL = 'standing-approval-10-30'
+X_PUBLIC = ('x_post', 'x_reply')
+MENTION = re.compile(r'(?<![\w/])@([A-Za-z0-9_]{1,15})\b')
+# Include bare domains: a missing scheme does not turn a link into plain text.
+X_URL = re.compile(r'\b(?:[a-zA-Z][a-zA-Z0-9+.-]*://|www\.)[^\s<>]+|'
+                   r'(?<![\w@/])(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s<>]*)?')
 
 
 def backup(path):
@@ -77,7 +85,7 @@ def current(lane, rh):
 
 
 def all_rows(root, rh):
-    for lane in sorted((root / 'lanes').iterdir()):
+    for lane in sorted((root / 'lanes').glob('*')):
         if lane.is_dir():
             yield from current(lane, rh).values()
 
@@ -92,7 +100,7 @@ def record(lane, row, rh):
 
 
 def body(row):
-    return Path(row['draft_path']).read_bytes().decode('utf-8')
+    return row['text'] if 'text' in row else Path(row['draft_path']).read_bytes().decode('utf-8')
 
 
 def titles(text):
@@ -116,7 +124,10 @@ def features(text, names=()):
     whole_body = text
     # Strip greetings and trailing signatures before choosing the boundary sentences.
     text = re.sub(r'^\s*(?:hi|hello|dear|hey|olá)\b[^\n]*\n+', '', text, flags=re.I)
-    text = re.split(r'\n\s*(?:thanks|thank you|best|regards|cheers|obrigado|operator)(?:[,!\s]|$)', text, maxsplit=1, flags=re.I)[0]
+    # Sign-off names (the owner's first name) come from RH_SIGNATURE_NAMES, comma-separated.
+    signoffs = ['thanks', 'thank you', 'best', 'regards', 'cheers', 'obrigado', 'operator'] + [
+        re.escape(n.strip()) for n in os.environ.get('RH_SIGNATURE_NAMES', '').split(',') if n.strip()]
+    text = re.split(r'\n\s*(?:' + '|'.join(signoffs) + r')(?:[,!\s]|$)', text, maxsplit=1, flags=re.I)[0]
     # Protect periods and question marks inside URLs before splitting sentences.
     text = URL.sub(' LINK ', titles(text))
     sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+|\n+', text) if s.strip()]
@@ -191,6 +202,145 @@ def link_errors(text):
     return errors
 
 
+def same_row(left, right):
+    return (left['lane'], left['id']) == (right['lane'], right['id'])
+
+
+def post_id(value):
+    if not isinstance(value, str):
+        return None
+    if value.isdecimal():
+        return value
+    match = re.fullmatch(r'https?://(?:www\.)?(?:x\.com|twitter\.com)/(?:[A-Za-z0-9_]+|i/web)/status/(\d+)(?:[/?#].*)?', value, re.I)
+    return match[1] if match else None
+
+
+def reply_target(row):
+    return post_id(row.get('in_reply_to')) or post_id(row.get('self_reply_to'))
+
+
+def original(row):
+    return row.get('channel') == 'x_post' and not row.get('self_reply_to')
+
+
+def topics(row, text):
+    return ({m.casefold() for m in re.findall(r'\bC\d+[a-z]?\b', text, re.I)} |
+            {m.casefold() for m in re.findall(r'(?<!\w)#([\w-]+)', text)} |
+            {p.casefold() for p in row.get('projects', [])})
+
+
+def mainly_question(text):
+    text = X_URL.sub('', text)
+    sentences = [s.strip() for s in re.findall(r'[^.!?]+[.!?]?', text) if s.strip()]
+    questions = [s for s in sentences if s.endswith('?')]
+    return bool(questions) and (len(questions) * 2 >= len(sentences) or
+                               sum(len(s) for s in questions) * 2 >= sum(map(len, sentences)))
+
+
+def activity_time(row):
+    # A posting attempt also consumes a slot: the hook cannot know whether the network succeeded.
+    for key in ('sent', 'gate_attempt'):
+        if row.get(key, {}).get('utc'):
+            return time_of(row[key]['utc'])
+    if row.get('status') == 'approved':
+        return time_of(row['approval']['utc'])
+    return None
+
+
+def x_checks(row, text, everyone, clock, selected=()):
+    """Cross-lane reach checks; warnings never affect PASS. No network access."""
+    failures, warnings = [], []
+    if row.get('channel') not in X_PUBLIC:
+        return failures, warnings
+    others = [r for r in everyone if not same_row(row, r)]
+    if original(row):
+        # 11-03: the daily limit was 1; now RH_X_ORIGINALS_PER_DAY (default 3) across
+        # all lanes, with RH_X_MIN_GAP_MINUTES (default 120) between originals so they don't land as a burst.
+        limit = int(os.environ.get('RH_X_ORIGINALS_PER_DAY', '3'))
+        gap = dt.timedelta(minutes=int(os.environ.get('RH_X_MIN_GAP_MINUTES', '120')))
+        today = []
+        for other in others:
+            if original(other):
+                stamp = activity_time(other)
+                if stamp and stamp.astimezone(UTC).date() == clock.astimezone(UTC).date():
+                    today.append(other)
+                if stamp and abs(clock - stamp) < gap:
+                    failures.append('x_post within {} min of another original: {}/{}'.format(
+                        int(gap.total_seconds() // 60), other['lane'], other['id']))
+        if len(today) >= limit:
+            failures.append('x_post daily limit ({} per UTC day across all lanes) reached: {}'.format(
+                limit, ', '.join('{}/{}'.format(o['lane'], o['id']) for o in today)))
+        if sum(original(r) for r in selected) > limit:
+            failures.append('x_post daily limit ({}); split batch contains more originals'.format(limit))
+        for match in X_URL.finditer(text):
+            url = match.group().rstrip('.,;!?)]}')
+            try:
+                parsed = urlsplit(url if '://' in url else 'https://' + url)
+                if parsed.hostname != 'x.com' or parsed.username or parsed.password:
+                    failures.append('external URL in main post; put the link in a separate --self-reply-to ID row')
+            except ValueError:
+                failures.append('invalid URL in main post')
+        if mainly_question(text) and not MENTION.search(text):
+            failures.append('question addressed to nobody; use x_reply on that person\'s post with --in-reply-to URL')
+        own_topics = topics(row, text)
+        counts = {topic: set() for topic in own_topics}
+        for other in others:
+            if not original(other):
+                continue
+            stamp = activity_time(other)
+            is_selected = any(same_row(other, r) for r in selected)
+            if not is_selected and not (stamp and dt.timedelta(0) <= clock - stamp <= dt.timedelta(hours=48)):
+                continue
+            try:
+                shared = own_topics & topics(other, body(other))
+            except (OSError, UnicodeError):
+                failures.append('topic comparison draft unreadable: ' + other['id'])
+                continue
+            for topic in shared:
+                counts[topic].add((other['lane'], other['id']))
+        for topic, matches in counts.items():
+            if len(matches) >= 4:
+                failures.append('five or more x_posts on topic {} within 48 h; bundle as a roundup'.format(topic))
+        if not row.get('media'):
+            warnings.append('media recommended: add --media PATH when a real, suitable image is available')
+    if row.get('media'):
+        for path in row['media']:
+            if not Path(path).is_file():
+                failures.append('media file missing: ' + path)
+    if row['channel'] == 'x_reply':
+        target = post_id(row.get('in_reply_to'))
+        if not target or not str(row.get('in_reply_to', '')).startswith(('https://', 'http://')):
+            failures.append('x_reply requires --in-reply-to URL for an X post')
+        try:
+            replied = json.loads(REPLIED.read_text())
+            if not isinstance(replied, (list, dict)):
+                raise ValueError('expected IDs')
+            ids = {post_id(str(k)) for k in replied}
+            if target and target in ids:
+                failures.append('already replied to this post in read-only replied.json: ' + target)
+        except (OSError, ValueError, TypeError):
+            failures.append('cannot read replied.json; duplicate reply check unavailable')
+        for other in others:
+            if other.get('channel') != 'x_reply':
+                continue
+            if target and reply_target(other) == target and (other.get('sent') or other.get('gate_attempt') or other.get('status') == 'approved'):
+                failures.append('already replied or reserved reply to this post: {}/{}'.format(other['lane'], other['id']))
+            if recent_sent(other, 14, clock) or any(same_row(other, r) for r in selected):
+                try:
+                    for label, score in similarities(row, other):
+                        failures.append('near-duplicate reply {}/{}: {} Jaccard {:.3f}'.format(other['lane'], other['id'], label, score))
+                except (OSError, UnicodeError):
+                    failures.append('reply comparison draft unreadable: ' + other['id'])
+    mentions = {m.casefold() for m in MENTION.findall(text)}
+    credited = {h.lstrip('@').casefold() for h in row.get('credit', [])}
+    target_author = re.match(r'https?://(?:www\.)?(?:x\.com|twitter\.com)/([A-Za-z0-9_]+)/status/', row.get('in_reply_to', ''), re.I)
+    if target_author:
+        credited.add(target_author[1].casefold())
+    for handle in sorted(mentions - credited):
+        warnings.append('@{}: tagging for reach is discouraged; use --credit @handle only for real credit, or reply to their post'.format(handle))
+    return failures, warnings
+
+
 def lint_rows(lane, selected, rh, allow_collision=None):
     cfg = settings(lane, rh)
     clock = time_of(rh.now())
@@ -217,13 +367,13 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                     checks['contact'].append('to_key must be the canonical contacts name')
             except (OSError, ValueError, KeyError):
                 checks['contact'].append('recipient missing from private contacts.json')
-        for other in collisions(row, everyone, clock):
+        for other in ([] if row['channel'] in X_PUBLIC else collisions(row, everyone, clock)):
             if not allow_collision:
                 checks['collision'].append('recent send: {}/{}'.format(other['lane'], other['id']))
         checks['links'] = link_errors(text)
         if cfg.get('science_checks', False) and row['channel'] == 'email':
             checks['science'] = science_checks(text, row.get('attachments', []))
-        for other in peers.values():
+        for other in ([] if row['channel'] == 'x_reply' else peers.values()):
             if other['id'] == row['id']:
                 continue
             try:
@@ -231,7 +381,10 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                     checks['batch'].append('pair {} / {}: {} Jaccard {:.3f}'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
                 checks['batch'].append('comparison draft unreadable: ' + other['id'])
-        results[row['id']] = dict(ok=not any(checks.values()), utc=rh.now(), sha256=hashlib.sha256(text.encode('utf-8')).hexdigest(), checks=checks)
+        warnings = []
+        if row['channel'] in X_PUBLIC:
+            checks['reach'], warnings = x_checks(row, text, everyone, clock, selected)
+        results[row['id']] = dict(warnings=warnings, ok=not any(checks.values()), utc=rh.now(), sha256=hashlib.sha256(text.encode('utf-8')).hexdigest(), checks=checks)
         if allow_collision:
             results[row['id']]['allow_collision'] = safe(allow_collision, 'collision reason')
     return results
@@ -248,7 +401,7 @@ def health(lane, rh):
                     errors.append('outreach {}: approved over 48 h ago, never sent'.format(row['id']))
             except (KeyError, ValueError, TypeError):
                 errors.append('outreach {}: invalid approval timestamp'.format(row['id']))
-        if row['status'] == 'sent':
+        if row['status'] == 'sent' and row['channel'] not in X_PUBLIC:
             if not all(approval.get(k) for k in ('utc', 'by', 'sha256', 'quote')):
                 errors.append('outreach {}: sent without approval'.format(row['id']))
             try:
@@ -262,7 +415,7 @@ def health(lane, rh):
 @contextlib.contextmanager
 def send_lock(root, action):
     # Serialize cross-lane check + receipt, while preserving the usual per-lane append lock.
-    if action != 'sent':
+    if action in ('status', 'due'):
         yield
         return
     with (root / '.outreach.lock').open('a') as lock:
@@ -288,6 +441,11 @@ def arguments(sub):
             p.add_argument('--purpose', required=True)
             p.add_argument('--file', required=True, type=Path)
             p.add_argument('--batch')
+            p.add_argument('--in-reply-to', help='X post URL for x_reply')
+            p.add_argument('--self-reply-to', help='our X post ID; x_post link self-reply, linted separately')
+            p.add_argument('--credit', action='append', default=[], help='real credit: @handle')
+            p.add_argument('--media', action='append', default=[], type=Path)
+            p.add_argument('--project', action='append', default=[], help='stable project tag for the 48 h series check')
             p.add_argument('--attach', action='append', default=[], help='attached results, checked with the configured science command')
         elif action in ('lint', 'approve'):
             p.add_argument('id', nargs='?')
@@ -320,7 +478,7 @@ def main(root, args, rh):
         selected = list(current(lane, rh).values()) if lane else list(all_rows(root, rh))
         if args.action == 'due':
             clock = time_of(rh.now())
-            selected = [r for r in selected if r['status'] == 'sent' and not r.get('reply') and
+            selected = [r for r in selected if r['status'] == 'sent' and r['channel'] not in X_PUBLIC and not r.get('reply') and
                         (args.all or time_of(r['follow_up_due']) < clock)]
         selected.sort(key=lambda r: (r['status'], r['lane'], r['id']))
         if args.json:
@@ -330,7 +488,7 @@ def main(root, args, rh):
                 print('{} {} {} {} {}{}'.format(r['status'], r['lane'], r['id'], r['to_name'], r['purpose'],
                       ' due=' + r['follow_up_due'] if r.get('follow_up_due') else ''))
         return 0
-    with rh.locked(lane), send_lock(root, args.action):
+    with send_lock(root, args.action), rh.locked(lane):
         if args.action == 'draft':
             name = safe(args.to, 'recipient')
             key = contact_key(name) if args.channel == 'email' else name
@@ -338,6 +496,24 @@ def main(root, args, rh):
             row = dict(id=uuid.uuid4().hex[:16], lane=lane.name, channel=args.channel, to_name=name, to_key=key,
                        purpose=safe(args.purpose, 'purpose'), draft_path=str(path), draft_sha256=sha(path),
                        status='drafted', created=rh.now())
+            if args.channel not in X_PUBLIC and (args.in_reply_to or args.self_reply_to or args.media or args.credit or args.project):
+                raise ValueError('X reach options require x_post or x_reply')
+            if args.self_reply_to:
+                if args.channel != 'x_post' or not args.self_reply_to.isdecimal() or args.in_reply_to:
+                    raise ValueError('--self-reply-to requires x_post and a numeric own-post ID; do not combine with --in-reply-to')
+                row['self_reply_to'] = args.self_reply_to
+            if args.in_reply_to:
+                if args.channel != 'x_reply' or not post_id(args.in_reply_to) or '://' not in args.in_reply_to:
+                    raise ValueError('--in-reply-to requires x_reply and an X post URL')
+                row['in_reply_to'] = args.in_reply_to
+            if args.credit:
+                if any(not re.fullmatch(r'@[A-Za-z0-9_]{1,15}', h) for h in args.credit):
+                    raise ValueError('--credit must be @handle')
+                row['credit'] = args.credit
+            if args.media:
+                row['media'] = [str(p.expanduser().resolve()) for p in args.media]
+            if args.project:
+                row['projects'] = [safe(p, 'project') for p in args.project]
             if args.batch:
                 row['batch'] = safe(args.batch, 'batch')
             if args.attach:
@@ -366,6 +542,8 @@ def main(root, args, rh):
                         row['draft_sha256'] = row['lint']['sha256']
                 record(lane, row, rh)
                 print('{} {} {}'.format('PASS' if row['lint']['ok'] else 'FAIL', row['id'], row['to_name']))
+                for warning in row['lint'].get('warnings', []):
+                    print('  WARN: ' + warning)
                 for check, failures in row['lint']['checks'].items():
                     for failure in failures:
                         print('  {}: {}'.format(check, failure))
@@ -378,12 +556,24 @@ def main(root, args, rh):
                 if sha(row['draft_path']) != row['lint']['sha256']:
                     raise ValueError('draft changed since lint; run outreach lint again')
                 safe(args.quote, 'approval quote')
+                if args.quote == STANDING_APPROVAL and row['channel'] not in X_PUBLIC:
+                    raise ValueError('standing approval is for public X posts/replies only; email and DMs need the owner\'s own words')
+                if row['channel'] in X_PUBLIC:
+                    failures, _ = x_checks(row, body(row), list(all_rows(root, rh)), time_of(rh.now()), selected)
+                    if failures:
+                        raise ValueError('X reach changed; lint again: ' + '; '.join(failures))
             elif args.action == 'sent':
                 if row['status'] != 'approved' or not row.get('approval'):
                     raise ValueError('sent requires approved draft')
                 if sha(row['draft_path']) != row['approval']['sha256']:
                     raise ValueError('draft changed after approval; lint and obtain approval again')
-                if collisions(row, list(all_rows(root, rh)), time_of(rh.now())) and not row.get('lint', {}).get('allow_collision'):
+                # Once the posting gate recorded an attempt, this is a receipt,
+                # not another authorization. replied.json may already include it.
+                if row['channel'] in X_PUBLIC and not row.get('gate_attempt'):
+                    failures, _ = x_checks(row, body(row), list(all_rows(root, rh)), time_of(rh.now()))
+                    if failures:
+                        raise ValueError('X reach changed before sent: ' + '; '.join(failures))
+                if row['channel'] not in X_PUBLIC and collisions(row, list(all_rows(root, rh)), time_of(rh.now())) and not row.get('lint', {}).get('allow_collision'):
                     raise ValueError('recent contact collision; lint with --allow-collision and obtain approval again')
             elif args.action == 'reply' and row['status'] != 'sent':
                 raise ValueError('reply requires a sent message')
@@ -392,7 +582,7 @@ def main(root, args, rh):
         for old in selected:
             row = dict(old, updated=rh.now())
             if args.action == 'approve':
-                row.update(status='approved', approval=dict(utc=rh.now(), by='owner (relayed)', quote=args.quote,
+                row.update(status='approved', approval=dict(utc=rh.now(), by='owner (standing approval)' if args.quote == STANDING_APPROVAL else 'owner (relayed)', quote=args.quote,
                                                            sha256=sha(row['draft_path'])))
             elif args.action == 'sent':
                 sent_at = time_of(rh.now())

@@ -4,6 +4,7 @@ import storage
 import base64
 import concurrent.futures
 import datetime as dt
+import errno
 import fcntl
 import hashlib
 import json
@@ -17,6 +18,7 @@ import stat
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 import zlib
 
@@ -24,11 +26,44 @@ import harvest_reader
 
 UTC = dt.timezone.utc
 
+DIRECT_SSH = r'root@(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}'
+
+
+def ssh_destination(pod):
+    """ssh argv tail for a pod. Prefer direct TCP SSH when registered.
+
+    11-04: RunPod's ssh.runpod.io proxy started closing every session about
+    3 minutes in, so harvests failed on both pods. The optional
+    `ssh_direct` field ("root@IP:PORT", host key already in known_hosts)
+    is used first; the proxy target stays as the identity and fallback.
+    """
+    direct = pod.get('ssh_direct')
+    if direct:
+        if not re.fullmatch(DIRECT_SSH, direct):
+            raise ValueError('ssh_direct must be root@IP:PORT')
+        user_host, port = direct.rsplit(':', 1)
+        return ['-p', port, user_host]
+    return [pod['ssh_target']]
+
+
 
 class PodBusy(Exception):
     pass
+
+
+class RemoteFileSkipped(Exception):
+    """A fully drained remote response excluded one unstable/unreadable file."""
+    def __init__(self, reason, detail=None):
+        self.reason = reason
+        self.detail = detail
+        super().__init__(reason)
+
+
 MAX_BYTES = harvest_reader.MAX_BYTES
-DISK_FLOOR_BYTES = 28_000_000_000  # Free-space guard before full snapshots.
+# Free-space guard before full snapshots. A floor of 28-33 GB blocked every harvest on a
+# controller with 22 GiB free (11-04), so the default is 12 GB; raise it per host with
+# RH_DISK_FLOOR_BYTES when the disk has room.
+DISK_FLOOR_BYTES = int(os.environ.get('RH_DISK_FLOOR_BYTES', '12000000000'))
 LOW_DISK_MAX_BYTES = 50_000_000
 
 
@@ -46,6 +81,12 @@ def validate(pod, required=False):
             raise ValueError('harvest_dest must be an absolute controller lane results path')
     if pod.get('ends_utc') is not None:
         timestamp(pod['ends_utc'])
+    exclusions = pod.get('harvest_exclude_dirs', [])
+    if (not isinstance(exclusions, list) or any(not isinstance(name, str)
+            or name not in harvest_reader.DEPENDENCY_DIRS for name in exclusions)
+            or len(set(exclusions)) != len(exclusions)):
+        raise ValueError('harvest_exclude_dirs must be a unique list of .lake, .elan or .cache')
+    harvest_reader.path_exclusions(roots or [], pod.get('harvest_exclude_paths', []))
 
 
 def timestamp(value):
@@ -75,9 +116,15 @@ def rows(path):
 
 def append(path, row):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a') as f:
+    with path.open('a+b') as f:
         fcntl.flock(f, fcntl.LOCK_EX)
-        f.write(json.dumps(row, sort_keys=True) + '\n')
+        # A kill during a prior append must not swallow the next checkpoint.
+        f.seek(0, os.SEEK_END)
+        if f.tell():
+            f.seek(-1, os.SEEK_END)
+            if f.read(1) != b'\n':
+                f.write(b'\n')
+        f.write((json.dumps(row, sort_keys=True) + '\n').encode())
         f.flush()
         os.fsync(f.fileno())
 
@@ -113,20 +160,27 @@ class Proxy:
     Only an in-memory Python reader and read-only ps sleep inventory run remotely.
     """
     def __init__(self, pod, timeout=600):
-        self.deadline = time.monotonic() + timeout
+        self.started = time.monotonic()
+        self.deadline = self.started + timeout
+        self.max_deadline = self.started + max(timeout, 3600)
+        self.idle_timeout = min(timeout, 120)
+        self.last_progress = self.started
         self.buffer = b''
         self.token = ('RHH_' + uuid.uuid4().hex + ':').encode()
         hosts = settings.path('RH_KNOWN_HOSTS', Path('.runtime/ssh/known_hosts'))
         argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
                 '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
                 '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-                '-i', str(settings.path('RH_SSH_KEY', Path('.runtime/ssh/id_ed25519'))), pod['ssh_target']]
+                '-i', str(settings.path('RH_SSH_KEY', Path('.runtime/ssh/id_ed25519')))] + ssh_destination(pod)
         self.process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         try:
             while b'# ' not in self.buffer:
                 self.read()
             self.buffer = b''
-            source = Path(harvest_reader.__file__).read_text() + '\nserve(' + repr(self.token.decode()) + ', ' + repr(pod['results']) + ')\n'
+            source = (Path(harvest_reader.__file__).read_text() + '\nserve('
+                      + repr(self.token.decode()) + ', ' + repr(pod['results']) + ', '
+                      + repr(pod.get('harvest_exclude_dirs', [])) + ', '
+                      + repr(pod.get('harvest_exclude_paths', [])) + ')\n')
             encoded = base64.b64encode(zlib.compress(source.encode(), 9)).decode()
             # A short shell command starts an in-memory loader. Acknowledging
             # every small input line prevents PTY canonical-queue overflow even
@@ -156,13 +210,14 @@ class Proxy:
             raise
 
     def read(self):
-        left = self.deadline - time.monotonic()
+        left = self.remaining()
         if left <= 0:
             raise TimeoutError('harvest timeout')
         if select.select([self.process.stdout], [], [], min(left, .25))[0]:
             block = os.read(self.process.stdout.fileno(), 65536)
             if not block:
                 raise OSError('SSH closed')
+            self.last_progress = time.monotonic()
             self.buffer += block.replace(b'\r', b'')
             if len(self.buffer) > 1_048_576:
                 raise ValueError('proxy frame limit')
@@ -172,7 +227,7 @@ class Proxy:
         fd = self.process.stdin.fileno()
         os.set_blocking(fd, False)
         while pending:
-            left = self.deadline - time.monotonic()
+            left = self.remaining()
             if left <= 0:
                 raise TimeoutError('harvest send timeout')
             readable, writable, _ = select.select([self.process.stdout], [fd], [], min(left, .25))
@@ -184,6 +239,17 @@ class Proxy:
                     pending = pending[count:]
                 except BlockingIOError:
                     pass
+
+    def remaining(self):
+        now = time.monotonic()
+        return min(self.deadline - now, self.idle_timeout - (now - self.last_progress))
+
+    def allow_work(self, page):
+        # Pay for bounded work as it is discovered, rather than granting every
+        # pod an hour up front. The idle bound still catches a stalled reader.
+        seconds = sum(1 + item.get('size', 0) / 1_000_000
+                      for item in page if 'path' in item and not item.get('skip') and not item.get('error'))
+        self.deadline = min(self.max_deadline, self.deadline + seconds)
 
     def receive(self):
         while True:
@@ -217,6 +283,7 @@ class Proxy:
             # files on this same connection while the inventory is paused.
             page = list(self.request(dict(op=operation)))
             end = page.pop()
+            self.allow_work(page)
             if end.get('deadline_seconds') is not None:
                 yield dict(metadata=True, deadline_seconds=end['deadline_seconds'])
             yield from page
@@ -230,6 +297,8 @@ class Proxy:
         ended = False
         for row in self.request(dict(op='get', **item)):
             if row.get('error'):
+                if row.get('skip') in ('changed_during_harvest', 'unreadable_file', 'invalid_remote_path'):
+                    raise RemoteFileSkipped(row['skip'], row.get('detail'))
                 raise ValueError('remote file changed or unreadable')
             if 'data' in row:
                 target.write(base64.b64decode(row['data'], validate=True))
@@ -247,7 +316,7 @@ class Proxy:
                 self.send(base64.b64encode(b'{"op":"quit"}').decode())
                 self.send('exit')
                 p.wait(timeout=2)
-            except (OSError, subprocess.SubprocessError):
+            except (OSError, ValueError, subprocess.SubprocessError):
                 p.kill()  # local SSH child only
         p.wait()
         p.stdin.close()
@@ -283,8 +352,37 @@ def local_path(base, relative):
     return path
 
 
+def local_spelling(base, relative, seen, remember=False):
+    """Detect actual filesystem aliases in files AND parent directories.
+
+    Linux sources may contain case/Unicode variants that alias on the controller.
+    On case-sensitive destinations both spellings remain eligible.
+    """
+    parts = Path(relative).parts
+    for i in range(1, len(parts) + 1):
+        prefix = str(Path(*parts[:i]))
+        key = unicodedata.normalize('NFD', prefix).casefold()
+        variants = seen.get(key, [])
+        for previous in variants:
+            if previous != prefix:
+                try:
+                    if os.path.samefile(base / previous, base / prefix):
+                        return previous
+                except FileNotFoundError:
+                    pass
+        if remember and prefix not in variants:
+            seen.setdefault(key, []).append(prefix)
+    return None
+
+
 def scope(pod):
-    return hashlib.sha256(json.dumps([pod.get('results'), pod.get('harvest_dest')], sort_keys=True).encode()).hexdigest()
+    declaration = [pod.get('results'), pod.get('harvest_dest')]
+    if pod.get('harvest_exclude_dirs'):
+        declaration.append(dict(exclude_dirs=sorted(pod['harvest_exclude_dirs'])))
+    if pod.get('harvest_exclude_paths'):
+        declaration.append(dict(exclude_paths=sorted(pod['harvest_exclude_paths'],
+                                                   key=lambda entry: json.dumps(entry, sort_keys=True))))
+    return hashlib.sha256(json.dumps(declaration, sort_keys=True).encode()).hexdigest()
 
 
 def pod_identity(row, pod):
@@ -354,6 +452,13 @@ def snapshot_inventory(base, directory):
     return inventory
 
 
+def trash_snapshot(directory):
+    """Reversible local retention; the remote reader never removes anything."""
+    storage.trash(directory)
+    if directory.exists():
+        raise OSError('snapshot was not moved to Trash')
+
+
 def retain(base, pod, log, now, index):
     """Prune only redundant payloads, keeping two verified snapshots and all unique data.
 
@@ -408,9 +513,9 @@ def retain(base, pod, log, now, index):
             continue  # legacy logical inventories also need complete coverage
         event = dict(utc=now, pod=pod['name'], pod_id=pod['pod_id'], lane=pod['lane'],
                      scope=scope(pod), path=str(directory), files=len(inventory),
-                     bytes=sum(value[0] for value in inventory.values()))
+                     bytes=sum(value[0] for value in inventory.values()), disposition='Trash')
         append(log, dict(event, event='SNAPSHOT_REMOVE_STARTED'))
-        storage.trash(directory)
+        trash_snapshot(directory)
         sync_dir(directory.parent)
         append(log, dict(event, event='SNAPSHOT_REMOVED'))
 
@@ -453,6 +558,10 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
         now = rh.now()
         row.update(utc=now, scope=scope(pod))
         validate(pod, required=True)
+        exclusions = harvest_reader.path_exclusions(pod['results'], pod.get('harvest_exclude_paths', []))
+        row['harvest_exclude_paths'] = [dict(entry, files=None, bytes=None, present=None) for entry in exclusions]
+        exclusion_reports = {entry['source']: entry for entry in row['harvest_exclude_paths']}
+        reported = set()
         base = Path(pod['harvest_dest']) / pod['name']
         local_path(base, 'snapshots').mkdir(parents=True, exist_ok=True)
         with (base / '.harvest.lock').open('a') as lock:
@@ -465,7 +574,17 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
             if index.get('pod_id') != pod['pod_id']:
                 index = {}
             latest = index.get('files', {})
-            previous = [(p, r) for p, r in snapshots(base, pod) if r.get('verified') is True]
+            checkpoint_file = local_path(base, 'VERIFY-CHECKPOINTS.jsonl')
+            checkpoints = {}
+            for entry in rows(checkpoint_file):
+                if isinstance(entry, dict) and identity(entry, pod) and isinstance(entry.get('file'), dict):
+                    checkpoints[entry.get('path')] = entry['file']
+            records = snapshots(base, pod)
+            prefixes = tuple(str(p.relative_to(base)) + '/' for p, _ in records)
+            reusable_latest = {source: item for source, item in latest.items()
+                               if isinstance(item, dict) and isinstance(item.get('stored'), str)
+                               and item['stored'].startswith(prefixes)}
+            previous = [(p, r) for p, r in records if r.get('verified') is True]
             prior = previous[-1][1]['files_index'] if previous else {}
             row['previous_verified_snapshot'] = str(previous[-1][0]) if previous else None
             snapshot = 'snapshots/' + timestamp(now).strftime('%Y%m%dT%H%M%S%fZ') + '-' + uuid.uuid4().hex[:8]
@@ -473,6 +592,7 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
             row['snapshot'] = str(base / snapshot)
             check_disk(root, pod, base, row)
             current = {}
+            spellings = {}
             complete, count = False, 0
             # Copy as pages arrive, so a large first inventory cannot postpone
             # every useful byte until the whole tree has been hashed.
@@ -493,8 +613,24 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
                         if count > 100000:
                             raise ValueError('manifest file limit')
                         source = item.get('path', '')
-                        if not harvest_reader.valid(source) or not any(source.startswith(p + '/') or source == p for p in pod['results']):
+                        in_roots = isinstance(source, str) and any(source.startswith(p + '/') or source == p for p in pod['results'])
+                        if in_roots and not harvest_reader.valid(source) and item.get('skip') == 'invalid_remote_path':
+                            row['skipped'].append(item)
+                            continue
+                        if not harvest_reader.valid(source) or not in_roots:
                             raise ValueError('unsafe manifest path')
+                        if item.get('skip') == 'excluded_path':
+                            if (source not in exclusion_reports or source in reported
+                                    or any(type(item.get(key)) is not int or item[key] < 0 for key in ('files', 'bytes'))
+                                    or type(item.get('present')) is not bool
+                                    or not item['present'] and (item['files'] or item['bytes'])):
+                                raise ValueError('invalid exclusion report')
+                            exclusion_reports[source].update({key: item[key] for key in ('files', 'bytes', 'present')})
+                            reported.add(source)
+                            row['skipped'].append(item)
+                            continue
+                        if harvest_reader.excluded_path(source, exclusions) and not item.get('error'):
+                            raise ValueError('excluded content in manifest')
                         if item.get('skip'):
                             row['skipped'].append(item)
                             continue
@@ -506,25 +642,39 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
                             raise ValueError('invalid file manifest')
                         if source in current:
                             raise ValueError('duplicate manifest path')
-                        old = prior.get(source, {})
                         expected = (item['size'], item['sha256'])
                         unchanged = False
-                        try:
-                            if ((old.get('size'), old.get('sha256')) == expected
-                                    and old['stored'].startswith('snapshots/')
-                                    and digest(local_path(base, old['stored'])) == expected):
-                                unchanged = True
-                        except FileNotFoundError:
-                            pass
+                        # INDEX also contains individually verified files from
+                        # older interrupted runs. Upgrade them only after the
+                        # current remote hash AND actual local bytes agree.
+                        for old in (checkpoints.get(source, {}), reusable_latest.get(source, {}), prior.get(source, {})):
+                            if not isinstance(old, dict):
+                                continue
+                            try:
+                                if ((old.get('size'), old.get('sha256')) == expected
+                                        and old['stored'].startswith('snapshots/')
+                                        and digest(local_path(base, old['stored'])) == expected):
+                                    unchanged = True
+                                    break
+                            except (OSError, ValueError, KeyError, TypeError):
+                                continue
                         check_disk(root, pod, base, row)
                         if row['low_disk'] and (unchanged or item['size'] >= LOW_DISK_MAX_BYTES):
                             row['skipped_low_disk'].append(dict(item, skip='skipped_low_disk'))
                             continue
                         relative = snapshot + '/' + source.lstrip('/')
-                        target = local_path(base, relative)
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        temporary = target.with_name('.' + target.name + '-' + uuid.uuid4().hex + '.tmp')
+                        temporary = None
                         try:
+                            target = local_path(base, relative)
+                            collision = local_spelling(base, relative, spellings)
+                            if collision or target.exists():
+                                row['skipped'].append(dict(path=source, skip='local_name_collision',
+                                    collides_with=collision or relative))
+                                continue
+                            target.parent.mkdir(parents=True, exist_ok=True)
+                            local_spelling(base, str(target.parent.relative_to(base)), spellings, remember=True)
+                            # A remote name may already occupy all 255 bytes.
+                            temporary = target.with_name('.rh-' + uuid.uuid4().hex + '.tmp')
                             linked = False
                             if unchanged:
                                 try:
@@ -544,8 +694,16 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
                                 raise ValueError('size/hash verification failed')
                             os.replace(temporary, target)
                             sync_dir(target.parent)
+                            local_spelling(base, relative, spellings, remember=True)
                             latest[source] = dict(item, stored=relative)
                             current[source] = dict(item, stored=relative)
+                            if not unchanged:
+                                # Reused bytes already have durable evidence in
+                                # their source checkpoint/manifest. Re-journaling
+                                # every link would grow metadata on every run.
+                                append(checkpoint_file, dict(pod=pod['name'], pod_id=pod['pod_id'],
+                                    lane=pod['lane'], scope=row['scope'], path=source,
+                                    file=current[source]))
                             row['snapshot_files'] += 1
                             row['snapshot_bytes'] += item['size']
                             if linked:
@@ -555,15 +713,26 @@ def harvest_one(root, pod, rh, transport=None, reason='periodic'):
                             else:
                                 row['files'] += 1
                                 row['bytes'] += item['size']
+                        except RemoteFileSkipped as error:
+                            skipped = dict(path=source, skip=error.reason)
+                            if error.detail:
+                                skipped['detail'] = error.detail
+                            row['skipped'].append(skipped)
                         except ValueError as error:
                             row['errors'].append(dict(path=source, error=type(error).__name__))
+                        except OSError as error:
+                            if error.errno not in (errno.ENAMETOOLONG, errno.EILSEQ, errno.EINVAL):
+                                raise
+                            row['skipped'].append(dict(path=source, skip='local_path_unrepresentable', errno=error.errno))
                         finally:
-                            if temporary.exists():
+                            if temporary is not None and temporary.exists():
                                 temporary.unlink()  # this call's uncommitted transfer
                 except (OSError, ValueError, KeyError, TypeError) as error:
                     row['errors'].append(dict(error=type(error).__name__))
             if not complete:
                 row['errors'].append(dict(error='incomplete_manifest'))
+            if reported != set(exclusion_reports):
+                row['errors'].append(dict(error='incomplete_exclusion_reports'))
             # Full verification of the final snapshot, including every linked
             # file. Never infer success from an inode, timestamp or prior flag.
             for source, item in current.items():
@@ -652,18 +821,33 @@ def run(root, entries, rh, name=None, due=False, transport=None):
         return failed
 
     selected = [p for p in entries if not name or p['name'] == name]
+    if name and selected:
+        # SIGINT must reach harvest_one's durable cancellation boundary. A
+        # thread-pool context otherwise waits for its worker to finish copying.
+        return 1 if one(selected[0]) else 0
     # Per-pod lock also serializes manual/deadline runs. Independent pods cannot
-    # consume each other's ten-minute transport timeout or delay their copies.
+    # consume each other's transport budget or delay their copies.
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         failures = list(pool.map(one, selected))
     return 1 if any(failures) else 0
 
 
-def lint(root, entries, rh):
+def lint(root, entries, rh, info=None):
     history = rows(state_root(root) / 'HARVEST.jsonl')
     now = timestamp(rh.now())
     errors = []
     for pod in entries:
+        if info is not None:
+            matching = [r for r in history if identity(r, pod) and not r.get('event')]
+            reports = {entry.get('source'): entry for entry in matching[-1].get('harvest_exclude_paths', [])} if matching else {}
+            for entry in harvest_reader.path_exclusions(pod.get('results') or [], pod.get('harvest_exclude_paths', [])):
+                report = reports.get(entry['source'], {})
+                counts = ('{} files, {:.3f} GB'.format(report['files'], report['bytes'] / 1_000_000_000)
+                          if type(report.get('files')) is int and type(report.get('bytes')) is int
+                          else 'counts unavailable (no completed inventory)')
+                info.append('excluded: {}/{}, {}, regenerate: {}'.format(
+                    pod['name'], entry['source'].removeprefix('/workspace/'), counts,
+                    ' '.join(entry['regenerate'].split())))
         if not pod.get('results'):
             errors.append('pod {} has no results paths'.format(pod['name']))
         if not pod.get('harvest_dest'):

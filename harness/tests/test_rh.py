@@ -502,6 +502,8 @@ class HarnessTests(unittest.TestCase):
     def test_scheduler_skips_missing_lanes_and_continues_failure(self):
         (self.root / 'lanes/restricted-b').mkdir()
         (self.root / 'lanes/restricted-a').mkdir()
+        for name in ('restricted-b', 'restricted-a'):
+            (self.root / 'lanes' / name / 'INTAKE.toml').write_text('')
         with patch.object(intake_all, 'ROOT', self.root), patch.object(intake_all.subprocess, 'run') as run:
             run.side_effect = [subprocess.CompletedProcess([], 1), subprocess.CompletedProcess([], 0), subprocess.CompletedProcess([], 0)]
             self.assertEqual(intake_all.main(), 1)
@@ -578,7 +580,7 @@ class PodTests(unittest.TestCase):
         mock = patch.object(pods.harvest, 'run', return_value=0)
         mock.start()
         self.addCleanup(mock.stop)
-        mock = patch.object(pods, 'notify', side_effect=AssertionError('live push forbidden'))
+        mock = patch.object(pods.pod_guard.lane_alerts, 'pod_alert', return_value=True)
         self.notifier = mock.start()
         self.addCleanup(mock.stop)
         mock = patch.object(rh, 'now', side_effect=lambda: self.clock.isoformat())
@@ -657,6 +659,7 @@ class PodTests(unittest.TestCase):
     def test_underused_exact_25_minute_boundary_and_gpu_threshold(self):
         self.pod['gpus'] = 1
         self.sample(0, gpu=59.9)
+        self.sample(12, gpu=59.9)
         self.sample(24, gpu=59.9)
         self.assertFalse(pods.state(self.history(), self.pod)[0])
         self.sample(25, gpu=59.9)
@@ -666,27 +669,27 @@ class PodTests(unittest.TestCase):
         self.sample(55, gpu=None)
         self.assertFalse(pods.state(self.history(), self.pod)[0])
 
-    def test_idle_needs_four_low_samples_over_45_minutes(self):
-        for minute in (0, 15, 30):
+    def test_idle_windows_follow_cpu_and_gpu_contracts(self):
+        for minute in (0, 5, 10, 15):
             self.sample(minute, cpu=.049)
-        self.assertEqual(pods.state(self.history(), self.pod), (True, False))
-        self.sample(45, cpu=.049)
-        self.assertEqual(pods.state(self.history(), self.pod), (True, True))
-        self.sample(60, cpu=.05)
+        self.assertEqual(pods.state(self.history(), self.pod), (False, False))
+        self.sample(20, cpu=.049)
+        self.assertEqual(pods.state(self.history(), self.pod), (False, True))
+        self.sample(25, cpu=.05)
         self.assertFalse(pods.state(self.history(), self.pod)[1])
         burst = [dict(self.history()[0], utc=(self.clock + dt.timedelta(minutes=i)).isoformat()) for i in range(4)]
         self.assertEqual(pods.state(burst, self.pod), (False, False))
         self.pod['gpus'] = 1
-        gpu_rows = [dict(r, cpu_frac=0, gpu_util=4.9) for r in self.history()[:4]]
+        gpu_rows = [dict(r, cpu_frac=1, gpu_util=0) for r in self.history()[:3]]
         self.assertTrue(pods.state(gpu_rows, self.pod)[1])
-        gpu_rows[-1]['gpu_util'] = 5
+        gpu_rows[-1]['gpu_util'] = 1
         self.assertFalse(pods.state(gpu_rows, self.pod)[1])
 
     def test_unreachable_resets_evidence_and_never_crashes_check(self):
         self.sample(-30, cpu=0)
         self.sample(-15, cpu=0)
         self.prober.side_effect = subprocess.TimeoutExpired('ssh SECRET', 60, output='SECRET')
-        code, out, err = self.cli('pods', 'check')
+        code, out, err = self.cli('pods', 'sample')
         self.assertEqual(code, 0, err)
         row = json.loads(out)
         self.assertFalse(row['reachable'])
@@ -699,51 +702,48 @@ class PodTests(unittest.TestCase):
         self.sample(15, cpu=0)
         self.assertFalse(pods.state(self.history(), self.pod)[0])
 
-    def test_push_throttles_per_pod_for_six_hours_and_retries_failure(self):
-        self.sample(-30)
-        self.sample(0)
-        self.notifier.side_effect = None
-        self.notifier.return_value = True
+    def test_agent_alert_throttles_30_minutes_and_retries_failure(self):
+        for minute in range(0, 21, 5):
+            self.sample(minute, cpu=0)
         for _ in range(2):
-            with contextlib.redirect_stdout(io.StringIO()):
-                pods.alerts(self.root, self.history(), self.pod, rh)
-        self.assertEqual(self.notifier.call_count, 1)
-        self.sample(359)
-        pods.alerts(self.root, self.history(), self.pod, rh)
-        self.assertEqual(self.notifier.call_count, 1)
-        self.sample(360)
-        self.notifier.return_value = False
-        with contextlib.redirect_stderr(io.StringIO()):
             pods.alerts(self.root, self.history(), self.pod, rh)
+        self.assertEqual(self.notifier.call_count, 1)
+        for minute in range(25, 50, 5):
+            self.sample(minute, cpu=0)
+            pods.alerts(self.root, self.history(), self.pod, rh)
+        self.assertEqual(self.notifier.call_count, 1)
+        self.sample(50, cpu=0)
+        self.notifier.return_value = False
+        pods.alerts(self.root, self.history(), self.pod, rh)
         self.assertEqual(self.notifier.call_count, 2)
         self.notifier.return_value = True
         pods.alerts(self.root, self.history(), self.pod, rh)
         self.assertEqual(self.notifier.call_count, 3)
-        self.assertEqual(len([r for r in self.history() if r.get('event') == 'NOTIFIED']), 2)
+        events = [r for r in self.history() if r.get('event') == 'AGENT_ALERT']
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[-1]['minutes_idle'], 50)
+        self.assertAlmostEqual(events[-1]['idle_cost'], .8)
 
-    def test_idle_escalation_push_and_stop_recommendation_without_termination(self):
-        self.notifier.side_effect = None
-        self.notifier.return_value = True
-        for minute in (0, 15, 30):
-            self.sample(minute, cpu=0)
-        pods.alerts(self.root, self.history(), self.pod, rh)
-        self.assertEqual(self.notifier.call_args.args[-1], 'underused')
-        self.sample(45, cpu=0)
-        with contextlib.redirect_stdout(io.StringIO()):
+    def test_idle_alert_only_wakes_agents_without_lifecycle(self):
+        self.pod['gpus'] = 1
+        for minute in (0, 5, 10):
+            self.sample(minute, cpu=1, gpu=0)
+        with patch.object(pods, 'reap', side_effect=AssertionError('no lifecycle')):
             pods.alerts(self.root, self.history(), self.pod, rh)
             pods.alerts(self.root, self.history(), self.pod, rh)
-        self.assertEqual(self.notifier.call_count, 2)
-        self.assertEqual(self.notifier.call_args.args[-1], 'idle')
-        self.assertEqual(sum(r.get('event') == 'STOP_RECOMMENDED' for r in self.history()), 2)
-        # Event rows cannot count as samples in later evaluations.
-        self.assertEqual(len(pods.samples(self.history(), self.pod)), 4)
+        self.assertEqual(self.notifier.call_count, 1)
+        payload = self.notifier.call_args.args[-1]
+        self.assertEqual(payload['kind'], 'pod-idle')
+        self.assertEqual(payload['for'], 'agents')
+        self.assertEqual(payload['pod_id'], self.pod['pod_id'])
+        self.assertEqual(len(pods.samples(self.history(), self.pod)), 3)
 
     def test_lint_fails_every_pod_lane_and_leaves_other_lanes_unchanged(self):
         for lane in sorted(pods.LANES):
             p = dict(self.pod, lane=lane)
             (self.root / 'pods.json').write_text(json.dumps([p]))
-            self.sample(-30, pod=p)
-            self.sample(0, pod=p)
+            for minute in (-30, -15, 0):
+                self.sample(minute, pod=p)
             code, out, err = self.cli('lint', lane)
             self.assertEqual(code, 1, err)
             self.assertIn('underused pod p1: CPU 10.0%', out)
@@ -809,7 +809,7 @@ class PodTests(unittest.TestCase):
             return dict(vcpus=32, gpus=0, cpu_frac=.7, gpu_util=None)
 
         self.prober.side_effect = measure
-        self.assertEqual(self.cli('pods', 'check')[0], 0)
+        self.assertEqual(self.cli('pods', 'sample')[0], 0)
         self.assertEqual(self.prober.call_count, 12)
         self.assertEqual(len(self.history()), 12)
         self.assertGreater(peak, 1)
@@ -827,10 +827,10 @@ class PodTests(unittest.TestCase):
         first = output([('MODE', 'v2'), ('NPROC', '32'), ('MAX', 'max 100000'), ('GPUS', 'NO_GPU'),
                         ('TIME1', '10 0'), ('CPU1', 'usage_usec 1000000'), ('WAIT', '')])
         second = output([('TIME2', '15 0'), ('CPU2', 'usage_usec 11000000'), ('GPUUTIL', ''), ('END', '')])
-        with patch.object(pods.subprocess, 'Popen', return_value=process) as popen,\
-                patch.object(pods.select, 'select', return_value=([process.stdout], [], [])),\
-                patch.object(pods.os, 'read', side_effect=[b'# ', first, second]),\
-                patch.object(pods.uuid, 'uuid4', return_value=type('Token', (), {'hex': 'fixture'})()),\
+        with patch.object(pods.subprocess, 'Popen', return_value=process) as popen, \
+                patch.object(pods.select, 'select', return_value=([process.stdout], [], [])), \
+                patch.object(pods.os, 'read', side_effect=[b'# ', first, second]), \
+                patch.object(pods.uuid, 'uuid4', return_value=type('Token', (), {'hex': 'fixture'})()), \
                 patch.object(pods.time, 'sleep') as sleep:
             fields = pods.remote_read(self.pod)
         popen.assert_called_once()
@@ -847,7 +847,7 @@ class PodTests(unittest.TestCase):
         from unittest.mock import MagicMock
         process = MagicMock()
         process.poll.return_value = None
-        with patch.object(pods.subprocess, 'Popen', return_value=process) as popen,\
+        with patch.object(pods.subprocess, 'Popen', return_value=process) as popen, \
                 patch.object(pods.time, 'monotonic', side_effect=[0, 61]):
             with self.assertRaises(TimeoutError):
                 pods.remote_read(self.pod, timeout=60)

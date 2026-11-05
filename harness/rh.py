@@ -36,6 +36,7 @@ import selection_policy
 import verification
 from verification import verification_line
 import pods
+import publish_lint
 import uuid
 import xml.etree.ElementTree as ET
 
@@ -47,7 +48,8 @@ CS_ALTERNATE_MODEL = 'claude-opus-4-6'
 CS_BANNED_MODELS = {'claude-opus-5'}
 CS_MODEL_RULE_MS = 1793387000000  # sessions before this are history, not violations
 EXTERNAL = {'paper', 'community', 'x', 'claude-science', 'organiser', 'answers'}
-SOURCES = sorted(EXTERNAL | {'internal', 'owner'})
+# RH_OWNER_ALIASES: older ledgers recorded the operator by name; those names stay valid sources.
+SOURCES = sorted(EXTERNAL | {'internal', 'owner'} | settings.names('RH_OWNER_ALIASES'))
 STOP_PATTERNS = (r'no ideas', r'out of ideas', r'recommend stopping', r'we could stop', r'nothing left to try')
 STATUSES = {'new', 'testing', 'closed', 'shipped'}
 # Promote and close are taste calls (is it new, is it worth testing, is it dead), so they record who decided,
@@ -624,7 +626,19 @@ class LintErrors(list):
 
 
 
+def outreach_only(lane):
+    """11-03: a lane may hold only an OUTREACH ledger (X post history). It is not a research
+    lane, so the queue, intake and sweep checks don't apply; only outreach health does."""
+    return (lane / 'OUTREACH.jsonl').is_file() and not any(
+        (lane / f).exists() for f in ('IDEAS.jsonl', 'INTAKE.toml', 'SWEEP.toml', 'INTAKE_RUNS.jsonl'))
+
+
 def lint_result(lane, report=None):
+    if outreach_only(lane):
+        errs = outreach.health(lane, sys.modules[__name__])
+        return dict(lane=lane.name, status='FAIL' if errs else 'OK', depth=None, failure_count=len(errs),
+                    failures=[dict(check='outreach', message=m) for m in errs], warnings=[], grandfathered=[],
+                    outreach=dict(status='FAIL' if errs else 'OK', count=len(outreach.current(lane, sys.modules[__name__]))))
     history = rows(lane / 'IDEAS.jsonl')
     cfg = lane_config(lane)
     runs = rows(lane / 'INTAKE_RUNS.jsonl')
@@ -691,12 +705,15 @@ def lint_result(lane, report=None):
     errors.add_many('sweep-obligations', sweep_errors)
     if not setup:
         errors.add_many('lane-cadence', cadence.lint(lane, sys.modules[__name__]))
-    errors.add_many('pod-health', pods.lint(lane, sys.modules[__name__]))
+    info = []
+    pod_warnings = []
+    errors.add_many('pod-health', pods.lint(lane, sys.modules[__name__], info=info, warnings=pod_warnings))
     outreach_errors = outreach.health(lane, sys.modules[__name__])
     errors.add_many('outreach', outreach_errors)
     return dict(lane=lane.name, status='FAIL' if errors else 'OK', depth=n, setup=setup,
                 failure_count=len(errors), failures=errors.failures,
-                warnings=policy_warnings + lessons.warnings(lane, sys.modules[__name__]), grandfathered=grandfathered,
+                warnings=policy_warnings + lessons.warnings(lane, sys.modules[__name__]) + pod_warnings,
+                grandfathered=grandfathered, info=info,
                 outreach=dict(status='FAIL' if outreach_errors else 'OK', count=len(outreach.current(lane, sys.modules[__name__]))))
 
 
@@ -712,6 +729,8 @@ def checked_lint(lane, report=None):
 
 def print_lint(result):
     lane = result['lane']
+    for message in result.get('info', []):
+        print('INFO {}: {}'.format(lane, message))
     if 'outreach' in result:
         print('{} {}: outreach ({} messages)'.format(result['outreach']['status'], lane, result['outreach']['count']))
     for warning in result['warnings']:
@@ -721,7 +740,9 @@ def print_lint(result):
     for failure in result['failures']:
         print('FAIL {}: {}'.format(lane, failure['message']))
     if not result['failures']:
-        if result.get('setup'):
+        if result['depth'] is None:
+            print('OK {}: outreach-only lane'.format(lane))
+        elif result.get('setup'):
             print('OK {}: setup grace (24h maximum); frozen declarations valid; no reading or results claimed'.format(lane))
         else:
             print('OK {}: depth={}; external reading and intake fresh'.format(lane, result['depth']))
@@ -787,7 +808,8 @@ def show_idea(root, key):
 
 def parser():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--root', type=Path, default=settings.path('RH_ROOT', ROOT), help='isolated harness root (default: installed root)')
+    p.add_argument('--root', type=Path, default=settings.path('RH_ROOT', ROOT),
+                   help='isolated harness root (default: installed root); X outreach quotas span all lanes in this root')
     sub = p.add_subparsers(dest='command', required=True)
     lane_setup.arguments(sub)
     lessons.arguments(sub)
@@ -795,6 +817,7 @@ def parser():
     pods.arguments(sub)
     cadence.arguments(sub)
     outreach.arguments(sub)
+    publish_lint.arguments(sub)
     receipt = sub.add_parser('prior-art', help='shared prior-art searches and receipt').add_subparsers(dest='action', required=True)
     a = receipt.add_parser('receipt')
     a.add_argument('key', metavar='KEY')
@@ -927,6 +950,8 @@ def main(argv=None):
                 args.lane, args.intake_action = args.x_search_lane, 'x-search'
             elif args.x_search_lane or any(value is not None for value in (args.query, args.subject, args.result, args.n)):
                 raise ValueError('X search flags require intake x-search LANE')
+        if args.command == 'publish-lint':
+            return publish_lint.main(args)
         if args.command == 'lane':
             return lane_setup.main(args.root, args, sys.modules[__name__])
         if args.command == 'outreach':

@@ -1,8 +1,8 @@
 """Read-only pod reader. Executed in memory by python3 -B, never installed on pods."""
 import base64
+import datetime as dt
 import hashlib
 import json
-import mimetypes
 import os
 from pathlib import PurePosixPath
 import re
@@ -11,13 +11,76 @@ import subprocess
 import sys
 
 MAX_BYTES = 200_000_000
-MEDIA = frozenset('.mp3 .mp4 .m4a .m4v .wav .wave .avi .mov .mkv .webm .flac .ogg .oga .ogv .opus .aac .aiff .aif .wma .wmv .mpeg .mpg .3gp .ts .mts .m2ts .mid .midi .amr .au'.split())
+DEPENDENCY_DIRS = frozenset(('.lake', '.elan', '.cache'))
+# 11-03: no '.ts' (TypeScript), and no host mimetypes guess (a pod's /etc/mime.types called a Snakemake
+# .smk file video/x-smacker and the harvest skipped it). Extensions here are unambiguous; MPEG-TS is caught by magic.
+MEDIA = frozenset('.mp3 .mp4 .m4a .m4v .wav .wave .avi .mov .mkv .webm .flac .ogg .oga .ogv .opus .aac .aiff .aif .wma .wmv .mpeg .mpg .3gp .mts .m2ts .mid .midi .amr .au'.split())
 
 
 def valid(path):
     return (isinstance(path, str) and path.startswith('/workspace/')
             and str(PurePosixPath(path)) == path and '..' not in path.split('/')
             and not any(ord(c) < 32 for c in path))
+
+
+def path_exclusions(roots, declarations):
+    """Resolve explicit root-relative exclusions without filesystem inference."""
+    if not isinstance(declarations, list):
+        raise ValueError('harvest_exclude_paths must be a list')
+    resolved = []
+    for entry in declarations:
+        if not isinstance(entry, dict):
+            raise ValueError('harvest_exclude_paths entries must be objects')
+        path = entry.get('path')
+        if (not isinstance(path, str) or not path or path == '.'
+                or PurePosixPath(path).is_absolute() or str(PurePosixPath(path)) != path
+                or '..' in path.split('/') or any(c in path for c in '*?[]\\')
+                or any(ord(c) < 32 or ord(c) == 127 for c in path)):
+            raise ValueError('harvest_exclude_paths path must be normalized, relative, without .. or globs')
+        root = entry.get('root', roots[0] if len(roots) == 1 else None)
+        if root not in roots:
+            raise ValueError('harvest_exclude_paths root must select one declared results root')
+        for key in ('reason', 'regenerate', 'approved_by', 'utc'):
+            if not isinstance(entry.get(key), str) or not entry[key].strip():
+                raise ValueError('harvest_exclude_paths requires non-empty ' + key)
+        try:
+            utc = dt.datetime.fromisoformat(entry['utc'].replace('Z', '+00:00'))
+            if utc.utcoffset() != dt.timedelta(0):
+                raise ValueError('not UTC')
+        except ValueError:
+            raise ValueError('harvest_exclude_paths utc must be an ISO-8601 UTC timestamp') from None
+        source = root + '/' + path
+        if any(source == other['source'] or source.startswith(other['source'] + '/')
+               or other['source'].startswith(source + '/') for other in resolved):
+            raise ValueError('harvest_exclude_paths must not duplicate or overlap')
+        resolved.append(dict(entry, root=root, source=source))
+    return resolved
+
+
+def excluded_path(path, exclusions):
+    return next((entry for entry in exclusions
+                 if path == entry['source'] or path.startswith(entry['source'] + '/')), None)
+
+
+def exclusion_counts(path):
+    """Count regular files using metadata only; never follow links or open payload."""
+    try:
+        fd = opened(path, directory=True)
+    except FileNotFoundError:
+        return dict(files=0, bytes=0, present=False)
+    files = size = 0
+    def failed(error):
+        raise error
+    try:
+        for _, _, names, directory_fd in os.fwalk('.', dir_fd=fd, follow_symlinks=False, onerror=failed):
+            for name in names:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if stat.S_ISREG(info.st_mode):
+                    files += 1
+                    size += info.st_size
+    finally:
+        os.close(fd)
+    return dict(files=files, bytes=size, present=True)
 
 
 def opened(path, directory=False):
@@ -41,8 +104,8 @@ def opened(path, directory=False):
 
 
 def media(path, head):
-    mime = mimetypes.guess_type(path)[0] or ''
-    return (PurePosixPath(path).suffix.lower() in MEDIA or mime.startswith(('audio/', 'video/'))
+    return (PurePosixPath(path).suffix.lower() in MEDIA
+            or len(head) >= 377 and head[0] == head[188] == head[376] == 0x47
             or head.startswith((b'fLaC', b'OggS', b'ID3', b'\x1aE\xdf\xa3'))
             or head[:4] == b'RIFF' and head[8:12] in (b'WAVE', b'AVI ')
             or head[4:8] == b'ftyp')
@@ -56,7 +119,7 @@ def inspect(path):
             return dict(path=path, skip='special')
         if before.st_size > MAX_BYTES:
             return dict(path=path, skip='over_200_MB', size=before.st_size)
-        head = f.read(16)
+        head = f.read(512)
         if media(path, head):
             return dict(path=path, skip='media', size=before.st_size)
         digest = hashlib.sha256(head)
@@ -75,27 +138,53 @@ def inspect(path):
         return dict(path=path, size=size, sha256=digest.hexdigest())
 
 
-def manifest(roots):
+def manifest(roots, excluded_dirs=(), excluded_paths=()):
+    exclusions = path_exclusions(roots, list(excluded_paths))
     for root in roots:
         try:
             fd = opened(root, directory=True)
             os.close(fd)
+            for entry in exclusions:
+                if entry['root'] == root:
+                    try:
+                        yield dict(path=entry['source'], skip='excluded_path', **exclusion_counts(entry['source']))
+                    except (OSError, ValueError):
+                        yield dict(path=entry['source'], error='exclusion_count_failed')
             # fwalk with follow_symlinks=False; inspect also guards every parent.
             def failed(error):
                 raise error
             for directory, dirs, files in os.walk(root, followlinks=False, onerror=failed):
                 for name in sorted(dirs + files):
                     path = directory + '/' + name
-                    info = os.lstat(path)
+                    if excluded_path(path, exclusions):
+                        if name in dirs:
+                            dirs.remove(name)
+                        continue
+                    if not valid(path):
+                        if name in dirs:
+                            dirs.remove(name)
+                        yield dict(path=path, skip='invalid_remote_path')
+                        continue
+                    try:
+                        info = os.lstat(path)
+                    except OSError:
+                        yield dict(path=path, skip='unreadable_file', detail='lstat_failed')
+                        continue
                     if stat.S_ISLNK(info.st_mode):
                         if name in dirs:
                             dirs.remove(name)
                         yield dict(path=path, skip='symlink')
+                    elif name in dirs and name in excluded_dirs:
+                        dirs.remove(name)
+                        yield dict(path=path, skip='excluded_dependency_directory')
                     elif name in files:
                         try:
                             yield inspect(path)
-                        except (OSError, ValueError):
-                            yield dict(path=path, error='unreadable_or_changed')
+                        except OSError:
+                            yield dict(path=path, skip='unreadable_file', detail='inspect_failed')
+                        except ValueError as error:
+                            reason = 'invalid_remote_path' if str(error) == 'path' else 'changed_during_harvest'
+                            yield dict(path=path, skip=reason, detail='inspect_failed')
         except (OSError, ValueError):
             yield dict(path=root, error='results_path_unavailable')
 
@@ -117,12 +206,15 @@ def deadline_seconds():
         return None
 
 
-def serve(token, roots):
+def serve(token, roots, excluded_dirs=(), excluded_paths=()):
+    exclusions = path_exclusions(roots, list(excluded_paths))
     def emit(row):
         print('\n' + token + base64.b64encode(json.dumps(row).encode()).decode(), flush=True)
     emit(dict(ready=True))
     pending = []
     for line in sys.stdin:
+        operation = None
+        detail = None
         try:
             encoded = line.strip()
             if encoded.startswith('+'):
@@ -135,10 +227,11 @@ def serve(token, roots):
                 encoded = ''.join(pending)
                 pending = []
             request = json.loads(base64.b64decode(encoded))
+            operation = request.get('op')
             if request['op'] in ('manifest', 'next'):
                 first = request['op'] == 'manifest'
                 if first:
-                    inventory = iter(manifest(roots))
+                    inventory = iter(manifest(roots, excluded_dirs, excluded_paths))
                 exhausted = False
                 for _ in range(16):
                     try:
@@ -154,9 +247,14 @@ def serve(token, roots):
                 path = request['path']
                 if not any(path.startswith(root + '/') for root in roots):
                     raise ValueError('outside roots')
+                if excluded_path(path, exclusions):
+                    raise ValueError('excluded path')
+                detail = 'inspect_failed'
                 expected = inspect(path)
                 if expected != dict(path=path, size=request['size'], sha256=request['sha256']):
+                    detail = 'manifest_hash_changed'
                     raise ValueError('changed')
+                detail = 'stream_hash_changed'
                 with os.fdopen(opened(path), 'rb') as f:
                     digest, size = hashlib.sha256(), 0
                     while True:
@@ -175,5 +273,13 @@ def serve(token, roots):
                 return
             else:
                 raise ValueError('operation')
-        except (OSError, ValueError, KeyError, TypeError):
-            emit(dict(end=True, error='remote_read_failed'))
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            response = dict(end=True, error='remote_read_failed')
+            # Protocol/root errors remain fatal. Only failures while reading a
+            # declared file are safe, explicitly recorded exclusions.
+            if operation == 'get' and detail:
+                if isinstance(error, OSError):
+                    response.update(skip='unreadable_file', detail=detail)
+                elif isinstance(error, ValueError) and str(error) in ('changed', 'growing', 'size', 'path'):
+                    response.update(skip='invalid_remote_path' if str(error) == 'path' else 'changed_during_harvest', detail=detail)
+            emit(response)

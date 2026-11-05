@@ -2,11 +2,14 @@
 import settings
 import argparse
 import harvest
+import harvest_dedupe
 import cadence
 import base64
 import contextlib
 import hashlib
 import inspect
+import pod_guard
+import pod_maintenance
 import socket
 import stat
 import threading
@@ -71,6 +74,8 @@ def registry(root):
             raise ValueError('invalid pod id')
         if not re.fullmatch(r'[a-z0-9-]+@ssh\.runpod\.io', pod.get('ssh_target', '')):
             raise ValueError('ssh target must use the provider proxy syntax')
+        if 'ssh_direct' in pod and not re.fullmatch(harvest.DIRECT_SSH, str(pod['ssh_direct'])):
+            raise ValueError('ssh_direct must be root@IP:PORT')
         for key, low in (('vcpus', 0), ('gpus', -1), ('dollars_per_hour', -1)):
             value = pod.get(key)
             if type(value) not in (int, float) or not math.isfinite(value) or value <= low:
@@ -88,6 +93,7 @@ def registry(root):
             work_queue(pod['work_queue'])
         if done_file_path(pod):
             harvest.validate(pod, required=True)
+        pod_guard.validate(pod)
         names.add(pod['name']); ids.add(pod['pod_id']); targets.add(pod['ssh_target'])
     return entries
 
@@ -135,7 +141,7 @@ def remote_read(pod, timeout=60):
     argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-            '-i', str(key), pod['ssh_target']]
+            '-i', str(key)] + harvest.ssh_destination(pod)
     deadline = time.monotonic() + min(timeout, 60)
     p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     data = b''
@@ -196,12 +202,16 @@ def remote_read(pod, timeout=60):
             # In-memory stdlib reader; -B forbids bytecode writes. Paths are data,
             # base64 encodes the program and shlex quotes its one shell argument.
             final_parts += [mark('DONEFILE'), done_file_command(pod)]
+        if pod.get('progress_path'):
+            final_parts += [mark('PROGRESS'), pod_guard.progress_command(pod)]
         send('; '.join(final_parts + [mark('END'), 'exit']))
         until(('\n' + nonce + '_END\n').encode())
         output = data.decode('utf-8', 'replace')
         labels = ('MODE', 'NPROC', 'MAX', 'GPUS', 'TIME1', 'CPU1', 'WAIT', 'TIME2', 'CPU2', 'GPUUTIL', 'END')
         if done_file_path(pod):
             labels = labels[:-1] + ('DONEFILE', 'END')
+        if pod.get('progress_path'):
+            labels = labels[:-1] + ('PROGRESS', 'END')
         fields = {}
         for a, b in zip(labels, labels[1:]):
             # WAIT contains the echoed second command; it is never parsed.
@@ -241,6 +251,12 @@ def probe(pod):
                   cpu_frac=cpu_fraction(*counters, elapsed, vcpus))
     if done_file_path(pod):
         result['done_file'] = json.loads(fields['DONEFILE'])
+    if pod.get('progress_path'):
+        result['progress_path'] = pod['progress_path']
+        try:
+            result['progress'] = json.loads(fields['PROGRESS'])
+        except (KeyError, ValueError):
+            result['progress'] = dict(error='unavailable')
     return result
 
 
@@ -254,7 +270,7 @@ def stamp(value):
 def samples(history, pod):
     return sorted((r for r in history if r.get('pod') == pod['name'] and not r.get('event')
                    and r.get('lane') == pod['lane']
-                   and r.get('pod_id', pod['pod_id']) == pod['pod_id']), key=lambda r: stamp(r['utc']))
+                   and r.get('pod_id') == pod['pod_id']), key=lambda r: stamp(r['utc']))
 
 
 def low(row, pod, threshold):
@@ -266,16 +282,8 @@ def low(row, pod, threshold):
 
 def state(history, pod):
     recent = samples(history, pod)
-    if not recent:
-        return False, False
-    last = stamp(recent[-1]['utc'])
-    # At a 15-minute cadence adjacent samples are too close: select the latest
-    # eligible older sample and require every intervening sample to remain low.
-    older = next((i for i in range(len(recent) - 2, -1, -1)
-                  if last - stamp(recent[i]['utc']) >= dt.timedelta(minutes=25)), None)
-    underused = older is not None and all(low(r, pod, .60) for r in recent[older:])
-    idle = (len(recent) >= 4 and last - stamp(recent[-4]['utc']) >= dt.timedelta(minutes=45)
-            and all(low(r, pod, .05) for r in recent[-4:]))
+    underused = pod_guard.span(pod_guard.streak(recent, lambda r: low(r, pod, .60))) >= 25
+    idle = pod_guard.span(pod_guard.idle_rows(recent, pod)) >= (10 if pod['gpus'] else 20)
     return underused, idle
 
 
@@ -286,39 +294,8 @@ def percentages(row):
     return value
 
 
-def notify(pod, row, kind):
-    message = '{} {} {} ${:.2f}/h'.format(pod['name'], pod['lane'], percentages(row), pod['dollars_per_hour'])
-    try:
-        result = subprocess.run([*settings.command('RH_NOTIFY_COMMAND', 'notify-agent'), message, 'Pod ' + kind],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
-        return result.returncode == 0
-    except (OSError, subprocess.SubprocessError):
-        return False
-
-
 def alerts(root, history, pod, rh):
-    underused, idle = state(history, pod)
-    row = samples(history, pod)[-1]
-    if idle:
-        event = dict(row, event='STOP_RECOMMENDED')
-        rh.append(root / 'PODS.jsonl', event)
-        history.append(event)
-        print(json.dumps(event))
-    if not (underused or idle):
-        return
-    kind = 'idle' if idle else 'underused'
-    clock = stamp(row['utc'])
-    sent = [r for r in history if r.get('event') == 'NOTIFIED' and r.get('pod') == pod['name']
-            and r.get('pod_id') == pod['pod_id'] and r.get('kind') == kind]
-    if any(clock - stamp(r['utc']) < dt.timedelta(hours=6) for r in sent):
-        return
-    if notify(pod, row, kind):
-        event = dict(utc=row['utc'], pod=pod['name'], pod_id=pod['pod_id'], lane=pod['lane'],
-                     event='NOTIFIED', kind=kind)
-        rh.append(root / 'PODS.jsonl', event)
-        history.append(event)
-    else:
-        print('rh pods: notification failed for ' + pod['name'], file=sys.stderr)
+    return pod_guard.alert(root, samples(history, pod), history, pod, rh)
 
 
 def check(root, entries, rh):
@@ -342,20 +319,22 @@ def check(root, entries, rh):
         rh.append(root / 'PODS.jsonl', row)
         history.append(row)
         print(json.dumps(row))
-    for pod in entries:
-        alerts(root, history, pod, rh)
-    return 0
+    return int(any([alerts(root, history, pod, rh) for pod in entries]))
 
 
-def lint(lane, rh):
+def lint(lane, rh, info=None, warnings=None):
+    """info collects non-failing notes (declared harvest exclusions and their counts);
+    warnings collects pod_guard contract warnings (progress_path, setup_script)."""
     if lane.name not in LANES:
         return []
     root = lane.parent.parent
     entries = [p for p in registry(root) if p['lane'] == lane.name]
     if not entries:
         return []
+    if warnings is not None:
+        warnings.extend(pod_guard.warnings(entries))
     history = rh.rows(root / 'PODS.jsonl')
-    return harvest.lint(root, entries, rh) + ['underused pod {}: {}'.format(p['name'], percentages(samples(history, p)[-1]))
+    return harvest.lint(root, entries, rh, info=info) + ['underused pod {}: {}'.format(p['name'], percentages(samples(history, p)[-1]))
             for p in entries if state(history, p)[0]]
 
 
@@ -381,13 +360,22 @@ def arguments(sub):
     harvest_parser = actions.add_parser('harvest', help='pull verified incremental result snapshots')
     harvest_parser.add_argument('name', nargs='?')
     harvest_parser.add_argument('--due', action='store_true', help='only due pre-deadline harvests')
-    for action in ('add', 'set', 'remove', 'list', 'check', 'busy'):
+    dedupe_parser = actions.add_parser('dedupe', help='hard-link identical immutable payloads; dry-run by default')
+    dedupe_parser.add_argument('--apply', action='store_true')
+    dedupe_parser.add_argument('--pod', dest='pod_name')
+    maintenance_parser = actions.add_parser('maintain', help='one identity-locked harvest/reap worker')
+    maintenance_parser.add_argument('name')
+    maintenance_parser.add_argument('--pod-id', required=True)
+    for action in ('add', 'set', 'remove', 'list', 'check', 'sample', 'busy'):
         p = actions.add_parser(action)
         if action in ('add', 'set', 'remove', 'busy'):
             p.add_argument('name')
         if action in ('add', 'set'):
-            p.add_argument('--work-queue', type=work_queue, required=action == 'set',
+            p.add_argument('--work-queue', type=work_queue,
                            help='harness or done-file:/absolute/pod/path')
+            p.add_argument('--progress-path', help='absolute progress file on the pod')
+            p.add_argument('--progress-stall-minutes', type=float, help='no-change timeout (default 15)')
+            p.add_argument('--setup-script', help='absolute controller path to the declared setup script')
         if action == 'add':
             p.add_argument('--keep', action='store_true', help='exclude from idle reaping')
             p.add_argument('--pod-id', required=True)
@@ -423,6 +411,26 @@ def main(root, args, rh):
         return dispatch(root, pod, args.destination)
     if args.action == 'harvest':
         return harvest.run(root, registry(root), rh, name=args.name, due=args.due)
+    if args.action == 'dedupe':
+        result = harvest_dedupe.run(registry(root), apply=args.apply, name=args.pod_name,
+            progress=lambda message: print('rh pods dedupe: ' + message, file=sys.stderr, flush=True))
+        print(json.dumps(result, sort_keys=True))
+        return 0
+    if args.action == 'sample':
+        # Never share a lock with maintenance, registry edits, or lane checks.
+        with (root / '.pod-sampling.lock').open('a') as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 0
+            return check(root, registry(root), rh)
+    if args.action == 'check':
+        # Harvest/reap run in per-pod maintenance workers; sampling is `pods sample`.
+        return pod_maintenance.schedule(root, registry(root)) or lint_code or cadence_code
+    if args.action == 'maintain':
+        if not re.fullmatch(r'[a-z0-9]+', args.pod_id):
+            raise ValueError('invalid pod id')
+        return pod_maintenance.run(root, args.name, args.pod_id, rh, sys.modules[__name__])
     # list/busy are read-only and never connect to a pod.
     if args.action in ('list', 'busy'):
         entries = registry(root)
@@ -448,11 +456,6 @@ def main(root, args, rh):
         except BlockingIOError:
             raise ValueError('another pod check or registry edit is running')
         entries = registry(root)
-        if args.action == 'check':
-            code = check(root, entries, rh)
-            harvested = harvest.run(root, entries, rh)
-            reaped = reap(root, entries, rh, quiet=True)
-            return harvested or reaped or code or lint_code or cadence_code
         if args.action == 'reap':
             return reap(root, entries, rh, dry_run=args.dry_run)
         if args.action == 'remove':
@@ -466,7 +469,13 @@ def main(root, args, rh):
             previous = next((p for p in entries if p['name'] == args.name), None)
             if previous is None:
                 raise ValueError('unknown pod: ' + args.name)
-            updated = dict(previous, work_queue=work_queue(args.work_queue))
+            changes = {key: getattr(args, key) for key in
+                       ('work_queue', 'progress_path', 'progress_stall_minutes', 'setup_script')
+                       if getattr(args, key) is not None}
+            if not changes:
+                raise ValueError('set requires at least one field to update')
+            updated = dict(previous, **changes)
+            pod_guard.validate(updated)
             if done_file_path(updated):
                 harvest.validate(updated, required=True)
             if updated != previous:
@@ -478,8 +487,11 @@ def main(root, args, rh):
                     saved = Path(str(saved) + '-' + uuid.uuid4().hex)
                 shutil.copy2(path, saved)
                 edit = dict(utc=rh.now(), pod=previous['name'], pod_id=previous['pod_id'],
-                            field='work_queue', before=previous.get('work_queue'),
-                            after=updated['work_queue'], backup=str(saved), edit_id=uuid.uuid4().hex)
+                            fields=sorted(changes), before={k: previous.get(k) for k in changes},
+                            after=changes, backup=str(saved), edit_id=uuid.uuid4().hex)
+                if len(changes) == 1:
+                    field = next(iter(changes))
+                    edit.update(field=field, before=previous.get(field), after=changes[field])
                 harvest.append(root / 'POD_REGISTRY.jsonl', dict(edit, event='SET_INTENT'))
                 save_registry(root, [updated if p['name'] == args.name else p for p in entries])
                 harvest.append(root / 'POD_REGISTRY.jsonl', dict(edit, event='SET_COMMITTED'))
@@ -489,6 +501,10 @@ def main(root, args, rh):
                          dollars_per_hour=args.dollars_per_hour, owner_note=args.owner_note, vcpus=1, gpus=0,
                          results=args.results, harvest_dest=args.harvest_dest)
         candidate.update(keep=args.keep, work_queue=args.work_queue)
+        candidate.update({key: getattr(args, key) for key in
+                         ('progress_path', 'progress_stall_minutes', 'setup_script')
+                         if getattr(args, key) is not None})
+        pod_guard.validate(candidate)
         if args.ends_utc:
             candidate['ends_utc'] = args.ends_utc
         harvest.validate(candidate, required=True)
@@ -896,6 +912,11 @@ def reap_alert(root, pod, kind, now=None):
             alert_file.write(pod['name'] + '\n')
             alert_file.flush()
             os.fsync(alert_file.fileno())
+    if kind == 'idle':
+        # Keep the legacy local diagnostic at its unchanged threshold. The
+        # independent sampler (`pods sample`) owns both agent routes and their
+        # 30-minute throttle; sending here as well would duplicate wakes or pushes.
+        return
     try:
         result = subprocess.run([*settings.command('RH_NOTIFY_COMMAND', 'notify-agent'),
                                  pod['name'], 'Pod ' + kind],
@@ -1371,7 +1392,7 @@ def dispatch(root, pod, destination, mode='dispatch', expected_generation=None):
     argv = ['/usr/bin/ssh', '-tt', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20',
             '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=' + str(hosts),
             '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2',
-            '-i', str(key), pod['ssh_target']]
+            '-i', str(key)] + harvest.ssh_destination(pod)
     process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                stderr=subprocess.DEVNULL)
     try:

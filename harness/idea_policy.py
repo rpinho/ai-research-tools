@@ -291,7 +291,8 @@ def resolutions(history, lane):
                     for k in ('id', 'reason', 'evidence_path', 'decided_by', 'utc')):
                 raise ValueError('exception requires nonempty id, reason, evidence_path, decided_by and utc')
             decided = entry['decided_by'].strip()
-            if not (re.match(r'^Operator(?:\b|$)', decided, re.I) or any(
+            owners = '|'.join(re.escape(n) for n in ('operator', *sorted(settings.names('RH_OWNER_ALIASES'))))
+            if not (re.match(r'^(?:' + owners + r')(?:\b|$)', decided, re.I) or any(
                     re.search(r'(?<![\w-])' + re.escape(model) + r'(?![\w-])', decided)
                     for model in STRONG_DECIDERS)):
                 raise ValueError('exception decided_by must identify Operator or a strong model: ' + ', '.join(STRONG_DECIDERS))

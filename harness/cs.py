@@ -23,6 +23,7 @@ is kept in the configured CS_STATE/cookies.txt (0600). Writes need Origin + x-op
 
 Text arguments may be '@file' to read the prompt from a file.
 """
+import settings  # loads the host env file before CS_* are read
 import http.cookiejar, json, os, re, subprocess, sys, time, urllib.parse, urllib.request
 
 def _discover_base():
@@ -167,8 +168,10 @@ def pending(fid):
 
 
 def approve(fid, scope='conversation'):
+    # Approve Claude Science yourself. Only local compute is automatic; anything that spends,
     # reads credentials or deletes keeps waiting for a human click (Spend rule, README).
     def auto(r):
+        # A usage_checkpoint with no boundary is only "approaching your limit" and cannot bill;
         # boundary 'overage' (limit reached, continuing draws credits) still waits for a human.
         if r.get('kind') == 'usage_checkpoint':
             return not r.get('boundary')

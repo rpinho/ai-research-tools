@@ -190,6 +190,7 @@ def test_toy_quickstart_previews_and_refuses_overwrite(tmp_path):
 def test_intake_scheduler_uses_code_path_and_explicit_root(tmp_path, monkeypatch):
     import intake_all
     (tmp_path / 'lanes/toy').mkdir(parents=True)
+    (tmp_path / 'lanes/toy/INTAKE.toml').write_text('')
     fake = Mock(return_value=subprocess.CompletedProcess([], 0))
     monkeypatch.setattr(intake_all, 'ROOT', tmp_path)
     monkeypatch.setattr(intake_all.subprocess, 'run', fake)

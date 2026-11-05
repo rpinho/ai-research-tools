@@ -26,15 +26,20 @@ ORIGINAL_PROXY = h.Proxy
 
 @pytest.fixture(autouse=True)
 def no_live(monkeypatch, tmp_path):
+    monkeypatch.setattr(h, 'notify', Mock(return_value=True))
+    monkeypatch.setattr(h, 'Proxy', Mock(side_effect=AssertionError('live SSH forbidden')))
+    monkeypatch.setattr(h.shutil, 'disk_usage', lambda _: SimpleNamespace(free=100_000_000_000))
     # Tests use reversible temporary moves, never the host Trash service.
     def trash(path):
         dest = tmp_path / 'test-trash' / path.name
         dest.parent.mkdir(exist_ok=True)
         path.rename(dest)
     monkeypatch.setattr(h.storage, 'trash', trash)
-    monkeypatch.setattr(h, 'notify', Mock(return_value=True))
-    monkeypatch.setattr(h, 'Proxy', Mock(side_effect=AssertionError('live SSH forbidden')))
-    monkeypatch.setattr(h.shutil, 'disk_usage', lambda _: SimpleNamespace(free=100_000_000_000))
+    def trash(directory):
+        destination = tmp_path / 'Trash' / directory.name
+        destination.parent.mkdir(exist_ok=True)
+        directory.rename(destination)
+    monkeypatch.setattr(h, 'trash_snapshot', trash)
 
 
 @pytest.fixture
@@ -267,17 +272,19 @@ def test_cli_registration_requires_paths_and_accepts_deadline(setup, monkeypatch
     assert saved['ends_utc'] == '2026-11-03T12:00:00Z'
 
 
-def test_check_calls_harvest_after_utilization(setup, monkeypatch):
+def test_check_schedules_maintenance_without_sampling(setup, monkeypatch):
     root, pod, _, fake, clock, now = setup
     (root / 'pods.json').write_text(json.dumps([pod]))
     called = []
     monkeypatch.setattr(pods, 'check', lambda *_: called.append('check') or 0)
-    monkeypatch.setattr(h, 'run', lambda *_: called.append('harvest') or 1)
+    monkeypatch.setattr(pods.pod_maintenance, 'schedule', lambda *_: called.append('schedule') or 1)
+    monkeypatch.setattr(h, 'run', Mock(side_effect=AssertionError('harvest must be independent')))
     assert rh.main(['--root', str(root), 'pods', 'check']) == 1
-    assert called == ['check', 'harvest']
+    assert called == ['schedule']
 
 
-def test_actual_pty_protocol_binary_frames_without_remote_files(tmp_path, monkeypatch):
+@pytest.mark.parametrize('with_exclusion', [False, True])
+def test_actual_pty_protocol_binary_frames_without_remote_files(tmp_path, monkeypatch, with_exclusion):
     """Real local PTY exercises terminal echo, CRLF and shell input limits."""
     import pty
     proxy_class = ORIGINAL_PROXY
@@ -290,6 +297,12 @@ def test_actual_pty_protocol_binary_frames_without_remote_files(tmp_path, monkey
     deep = results / ('d' * 180)
     deep.mkdir()
     (deep / 'long-request.json').write_bytes(b'{}')
+    declarations = []
+    if with_exclusion:
+        states = results / 'bulk/native_states'
+        states.mkdir(parents=True)
+        (states / 'arm').write_bytes(b'states are omitted')
+        declarations = [bulk_exclusion(path='bulk/native_states')]
     source = Path(reader.__file__).read_text().replace("path.startswith('/workspace/')", "path.startswith(" + repr(str(tmp_path) + '/') + ")")
     real_popen = subprocess.Popen
     master, slave = pty.openpty()
@@ -302,10 +315,14 @@ def test_actual_pty_protocol_binary_frames_without_remote_files(tmp_path, monkey
     monkeypatch.setattr(h.subprocess, 'Popen', popen)
     monkeypatch.setattr(Path, 'read_text', lambda *_a, **_k: source)
     try:
-        with proxy_class(dict(results=[str(results)], ssh_target=('offline' + chr(64) + 'ssh.runpod.io')), timeout=15) as proxy:
+        with proxy_class(dict(results=[str(results)], ssh_target=('offline' + chr(64) + 'ssh.runpod.io'),
+                              harvest_exclude_paths=declarations), timeout=15) as proxy:
             count, final = 0, None
+            exclusions = []
             for item in proxy.manifest():
-                if 'path' in item:
+                if item.get('skip') == 'excluded_path':
+                    exclusions.append(item)
+                elif 'path' in item:
                     target = io.BytesIO()
                     proxy.download(item, target)
                     expected = data if item['path'].endswith('result.bin') else b'{}'
@@ -314,6 +331,11 @@ def test_actual_pty_protocol_binary_frames_without_remote_files(tmp_path, monkey
                 final = item
             assert count == 22
             assert final['end'] is True
+            if with_exclusion:
+                assert exclusions == [dict(path=str(states), skip='excluded_path', files=1,
+                                           bytes=len(b'states are omitted'), present=True)]
+            else:
+                assert not exclusions
         argv = popen.call_args.args[0]
         assert 'StrictHostKeyChecking=yes' in argv
         assert not list(results.glob('*.py'))
@@ -397,7 +419,7 @@ def test_live_transport_startup_failure_reaps_local_child(monkeypatch):
     child.stdout.close.assert_called_once()
 
 
-def test_partial_inventory_preserves_progress_but_is_not_a_link_source(setup):
+def test_partial_inventory_preserves_hash_confirmed_progress_across_runs(setup):
     root, pod, content, fake, clock, now = setup
     normal_manifest = fake.manifest
     def interrupted(self):
@@ -410,8 +432,8 @@ def test_partial_inventory_preserves_progress_but_is_not_a_link_source(setup):
     assert '/workspace/worker-a/results/x.json' in json.loads(index_path.read_text())['files']
     fake.manifest = normal_manifest
     result = run(setup)
-    assert result['verified'] and result['unchanged'] == 0
-    assert len(fake.calls) == 2
+    assert result['verified'] and result['unchanged'] == 1
+    assert len(fake.calls) == 1
 
 
 def test_notification_throttle_is_per_pod_across_scope_changes(setup):
@@ -501,7 +523,9 @@ def test_cancellation_logs_once_then_propagates_nonzero(setup, monkeypatch, erro
 def test_log_write_failure_propagates_without_retry_or_success(setup, monkeypatch):
     root, pod, _, fake, clock, _ = setup
     sink = Mock(side_effect=OSError('log unavailable'))
-    monkeypatch.setattr(h, 'append', sink)
+    original = h.append
+    monkeypatch.setattr(h, 'append', lambda path, row: sink(path, row)
+                        if path.name == 'HARVEST.jsonl' else original(path, row))
     with pytest.raises(OSError, match='log unavailable'):
         h.run(root, [pod], clock, name=pod['name'], transport=fake)
     sink.assert_called_once()
@@ -573,7 +597,7 @@ def test_final_verification_detects_corrupted_hardlink(setup, monkeypatch):
     assert row['errors'] == [dict(path=source, error='snapshot_verification_failed')]
 
 
-def test_failed_latest_snapshot_cannot_supply_links(setup):
+def test_failed_latest_snapshot_supplies_only_freshly_rehashed_files(setup):
     source = next(iter(setup[2]))
     first = run(setup)
     setup[2][source] = b'changed'
@@ -581,7 +605,7 @@ def test_failed_latest_snapshot_cannot_supply_links(setup):
     assert not run(setup)['verified']
     setup[3].extra = []
     last = run(setup)
-    assert last['verified'] and last['files'] == 1 and last['linked_files'] == 0
+    assert last['verified'] and last['files'] == 0 and last['linked_files'] == 1
     assert last['previous_verified_snapshot'] == first['snapshot']
 
 
@@ -714,3 +738,584 @@ def test_retention_refuses_symlink_payload_in_kept_snapshot(setup):
         h.retain(Path(second['snapshot']).parent.parent, setup[1],
                  h.state_root(setup[0]) / 'HARVEST.jsonl', setup[4].now(), {})
     assert Path(first['snapshot']).exists()
+
+
+def test_large_manifest_work_budget_crosses_old_ten_minute_limit(monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(h.time, 'monotonic', lambda: clock[0])
+    proxy = object.__new__(ORIGINAL_PROXY)
+    proxy.started = proxy.last_progress = clock[0]
+    proxy.deadline = clock[0] + 600
+    proxy.max_deadline = clock[0] + 3600
+    proxy.idle_timeout = 120
+    position = [0]
+    def request(_):
+        if proxy.remaining() <= 0:
+            raise TimeoutError('old wall clock exceeded')
+        for _ in range(16):
+            i = position[0]
+            if i == 10000:
+                break
+            position[0] += 1
+            yield dict(path='/workspace/results/file%d' % i, size=1000, sha256='a'*64)
+        yield dict(end=True, more=position[0] < 10000)
+        proxy.last_progress = clock[0]
+    proxy.request = request
+    count = 0
+    for item in proxy.manifest():
+        if 'path' in item:
+            count += 1
+            clock[0] += .1  # 1,000 seconds of useful per-file work
+    assert count == 10000 and clock[0] > proxy.started + 600
+    assert proxy.deadline <= proxy.max_deadline
+    clock[0] = proxy.last_progress + 121
+    assert proxy.remaining() < 0  # a hung reader still times out
+
+
+@pytest.mark.parametrize('interrupt', ['hard_exit', 'sigint'])
+def test_checkpoint_survives_process_exit_before_manifest_and_index_commit(setup, interrupt):
+    root, pod, content, fake, clock, _ = setup
+    script = '''
+import datetime, hashlib, json, os, signal, sys
+from pathlib import Path
+from types import SimpleNamespace
+import harvest
+root, pod, content, now = json.loads(sys.argv[1])
+signal.signal(signal.SIGINT, signal.default_int_handler)
+class Remote:
+    def __init__(self, pod): pass
+    def __enter__(self): return self
+    def __exit__(self, *args): pass
+    def manifest(self):
+        for path, data in content.items():
+            data = data.encode()
+            yield dict(path=path, size=len(data), sha256=hashlib.sha256(data).hexdigest())
+            if sys.argv[2] == 'sigint': os.kill(os.getpid(), signal.SIGINT)
+            else: os._exit(17)
+    def download(self, item, target): target.write(content[item['path']].encode())
+harvest.run(Path(root), [pod], SimpleNamespace(now=lambda: now), transport=Remote, name=pod['name'])
+'''
+    payload = json.dumps([str(root), pod, {p: b.decode() for p, b in content.items()}, clock.now()])
+    result = subprocess.run([sys.executable, '-B', '-c', script, payload, interrupt],
+                            cwd=Path(h.__file__).parent, capture_output=True, timeout=20)
+    assert result.returncode == (17 if interrupt == 'hard_exit' else -2), result.stderr.decode()
+    if interrupt == 'sigint':
+        attempts = h.rows(h.state_root(root) / 'HARVEST.jsonl')
+        assert len(attempts) == 1 and not attempts[0]['verified']
+        assert attempts[0]['errors'] == [dict(error='KeyboardInterrupt')]
+    base = Path(pod['harvest_dest']) / pod['name']
+    assert not (base / 'INDEX.json').exists()
+    assert not list(base.glob('snapshots/*/MANIFEST.json'))
+    checkpoint = base / 'VERIFY-CHECKPOINTS.jsonl'
+    assert len(h.rows(checkpoint)) == 1
+    # Simulate an interrupted second append. The next durable row stays valid.
+    with checkpoint.open('ab') as f:
+        f.write(b'{"incomplete":')
+    new_source = '/workspace/worker-a/next-result.json'
+    content[new_source] = b'new result'
+    row = run(setup)
+    assert row['verified'] and row['linked_files'] == 1 and row['files'] == 1
+    assert fake.calls == [new_source] and len(h.rows(checkpoint)) == 2
+
+
+def test_checkpoint_corruption_forces_fresh_download(setup):
+    _, pod, _, fake, *_ = setup
+    normal = fake.manifest
+    def interrupted(self):
+        yield next(iter(normal(self)))
+        raise OSError('interrupted')
+    fake.manifest = interrupted
+    first = run(setup)
+    source = next(iter(setup[2]))
+    (Path(first['snapshot']) / source.lstrip('/')).write_bytes(b'bad checkpoint bytes')
+    fake.manifest = normal
+    row = run(setup)
+    assert row['verified'] and row['files'] == 1 and row['linked_files'] == 0
+
+
+@pytest.mark.parametrize('kind', ['pod', 'scope'])
+def test_checkpoint_identity_changes_prevent_reuse(setup, kind):
+    _, pod, _, fake, *_ = setup
+    first = run(setup)
+    if kind == 'pod':
+        pod['pod_id'] = 'replacement'
+    else:
+        pod['results'].append('/workspace/another-root')
+    row = run(setup)
+    assert row['verified'] and row['files'] == 1 and row['linked_files'] == 0
+    assert Path(first['snapshot']).exists()
+
+
+def test_maximum_length_filename_is_copied(setup):
+    source = '/workspace/worker-a/' + 'x'*255
+    setup[2][source] = b'maximum length'
+    row = run(setup)
+    assert row['verified'] and row['verified_files'] == 2
+    assert (Path(row['snapshot']) / source.lstrip('/')).read_bytes() == b'maximum length'
+
+
+def test_unrepresentable_local_path_is_recorded_without_failing_other_files(setup):
+    setup[2]['/workspace/worker-a/' + 'x'*256] = b'too long locally'
+    row = run(setup)
+    assert row['verified'] and row['verified_files'] == 1
+    assert row['skipped'][0]['skip'] == 'local_path_unrepresentable'
+
+
+def test_bad_remote_name_is_skipped_without_losing_remaining_manifest(setup):
+    setup[3].extra = [dict(path='/workspace/worker-a/odd\nname', skip='invalid_remote_path')]
+    row = run(setup)
+    assert row['verified'] and row['verified_files'] == 1
+    assert row['skipped'][0]['skip'] == 'invalid_remote_path'
+
+
+def test_reader_bad_filename_does_not_abort_inventory(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)) and '\n' not in p)
+    (tmp_path / 'bad\nname').write_bytes(b'bad')
+    (tmp_path / 'good').write_bytes(b'good')
+    inventory = list(reader.manifest([str(tmp_path)]))
+    assert len(inventory) == 2
+    assert any(r.get('skip') == 'invalid_remote_path' for r in inventory)
+    assert any(r.get('sha256') == hashlib.sha256(b'good').hexdigest() for r in inventory)
+
+
+def test_changing_file_is_an_explicit_exclusion_and_next_file_verifies(setup, monkeypatch):
+    content, fake = setup[2:4]
+    source = next(iter(content))
+    content['/workspace/worker-a/second'] = b'next file succeeds'
+    download = fake.download
+    def changed(self, item, target):
+        if item['path'] == source:
+            target.write(b'uncommitted partial data')
+            raise h.RemoteFileSkipped('changed_during_harvest', 'manifest_hash_changed')
+        download(self, item, target)
+    monkeypatch.setattr(fake, 'download', changed)
+    row = run(setup)
+    assert row['verified'] and row['verified_files'] == 1
+    assert row['skipped'] == [dict(path=source, skip='changed_during_harvest', detail='manifest_hash_changed')]
+    assert not list(Path(row['snapshot']).rglob('*.tmp'))
+
+
+def test_reader_reports_changed_hash_and_keeps_protocol_usable(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    path = tmp_path / 'best.json'
+    path.write_bytes(b'before')
+    item = reader.inspect(str(path))
+    path.write_bytes(b'after')
+    requests = [dict(op='get', **item), dict(op='get', **reader.inspect(str(path))), dict(op='quit')]
+    wire = ''.join(base64.b64encode(json.dumps(r).encode()).decode()+'\n' for r in requests)
+    monkeypatch.setattr(reader.sys, 'stdin', io.StringIO(wire))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        reader.serve('TOKEN:', [str(tmp_path)])
+    frames = [json.loads(base64.b64decode(line[6:])) for line in output.getvalue().splitlines()
+              if line.startswith('TOKEN:')]
+    assert frames[1] == dict(end=True, error='remote_read_failed', skip='changed_during_harvest', detail='manifest_hash_changed')
+    assert frames[-1]['sha256'] == hashlib.sha256(b'after').hexdigest()
+    assert base64.b64decode(frames[2]['data']) == b'after'
+
+
+def test_retention_moves_redundant_snapshot_reversibly(setup):
+    first = run(setup)
+    run(setup)
+    run(setup)
+    moved = setup[0] / 'Trash' / Path(first['snapshot']).name
+    assert not Path(first['snapshot']).exists()
+    assert moved.is_dir() and (moved / 'MANIFEST.json').exists()
+    source = next(iter(setup[2]))
+    assert (moved / source.lstrip('/')).read_bytes() == setup[2][source]
+
+
+def test_dependency_exclusions_are_explicit_recursive_and_preserve_project_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    for relative in ['.elan/toolchains/binary', '.lake/packages/library',
+                     'verification/clean/.lake/packages/compiled',
+                     'verification/clean/proof.lean', 'receipts/check.json', '.cache/mathlib/archive']:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'research')
+    full = list(reader.manifest([str(tmp_path)]))
+    assert len(full) == 6 and all('sha256' in r for r in full)
+    selected = list(reader.manifest([str(tmp_path)], ['.lake', '.elan', '.cache']))
+    assert sum(r.get('skip') == 'excluded_dependency_directory' for r in selected) == 4
+    copied = {r['path'] for r in selected if 'sha256' in r}
+    assert copied == {str(tmp_path / 'verification/clean/proof.lean'), str(tmp_path / 'receipts/check.json')}
+
+
+def test_exclusion_policy_changes_scope_and_invalidates_freshness(setup):
+    root, pod, *_ = setup
+    original = h.scope(pod)
+    assert run(setup)['verified']
+    pod['harvest_exclude_dirs'] = ['.lake', '.elan']
+    h.validate(pod)
+    assert h.scope(pod) != original
+    assert h.lint(root, [pod], setup[4])
+    selected = h.scope(pod)
+    pod['harvest_exclude_dirs'].reverse()
+    assert h.scope(pod) == selected
+    pod['harvest_exclude_dirs'] = []
+    assert h.scope(pod) == original
+
+
+@pytest.mark.parametrize('bad', [['verification'], ['.lake', '.lake'], ['../.lake'], '.lake', [None]])
+def test_dependency_exclusion_policy_rejects_unsupported_names(setup, bad):
+    setup[1]['harvest_exclude_dirs'] = bad
+    with pytest.raises(ValueError, match='harvest_exclude_dirs'):
+        h.validate(setup[1])
+
+
+def test_checkpoint_journal_does_not_grow_for_unchanged_verified_runs(setup):
+    _, pod, content, *_ = setup
+    for _ in range(5):
+        assert run(setup)['verified']
+    journal = Path(pod['harvest_dest']) / pod['name'] / 'VERIFY-CHECKPOINTS.jsonl'
+    assert len(h.rows(journal)) == 1
+    source = next(iter(content))
+    content[source] = b'changed result'
+    assert run(setup)['verified']
+    assert len(h.rows(journal)) == 2
+
+
+@pytest.mark.parametrize('names', [('Answer.md', 'answer.md'), ('caf\u00e9.md', 'cafe\u0301.md')])
+def test_filesystem_name_alias_does_not_overwrite_first_file(setup, names):
+    root, _, content, *_ = setup
+    probe = root / names[0]
+    probe.write_bytes(b'filesystem probe')
+    aliases = (root / names[1]).exists()
+    content.clear()
+    a, b = ['/workspace/worker-a/' + name for name in names]
+    content[a], content[b] = b'first revision', b'distinct second revision'
+    row = run(setup)
+    assert row['verified']
+    assert (Path(row['snapshot']) / a.lstrip('/')).read_bytes() == content[a]
+    if aliases:
+        assert row['snapshot_files'] == 1
+        assert row['skipped'][0]['path'] == b
+        assert row['skipped'][0]['skip'] == 'local_name_collision'
+    else:
+        assert row['snapshot_files'] == 2 and not row['skipped']
+        assert (Path(row['snapshot']) / b.lstrip('/')).read_bytes() == content[b]
+
+
+def test_parent_directory_alias_is_recorded_without_merging_sources(setup):
+    root, _, content, *_ = setup
+    (root / 'Probe').mkdir()
+    aliases = (root / 'probe').exists()
+    content.clear()
+    a, b = '/workspace/worker-a/Results/a.json', '/workspace/worker-a/results/b.json'
+    content[a], content[b] = b'first directory', b'second directory'
+    row = run(setup)
+    assert row['verified']
+    assert (Path(row['snapshot']) / a.lstrip('/')).read_bytes() == content[a]
+    if aliases:
+        assert row['snapshot_files'] == 1
+        assert row['skipped'][0]['path'] == b
+        assert row['skipped'][0]['skip'] == 'local_name_collision'
+    else:
+        assert row['snapshot_files'] == 2 and not row['skipped']
+
+
+def bulk_exclusion(**changes):
+    return dict(dict(path='results/F057/native_states', reason='Deterministic arm states; no claim depends on them',
+                     regenerate='python regenerate.py --receipts results/F057/receipts/arms.json',
+                     approved_by='general', utc='2026-11-03T21:00:00Z'), **changes)
+
+
+def test_path_exclusion_validation_and_root_selection(setup):
+    pod = setup[1]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    h.validate(pod)
+    assert reader.path_exclusions(pod['results'], pod['harvest_exclude_paths'])[0]['source'] == '/workspace/worker-a/results/F057/native_states'
+    pod['results'].append('/workspace/other')
+    with pytest.raises(ValueError, match='root'):
+        h.validate(pod)
+    pod['harvest_exclude_paths'][0]['root'] = '/workspace/worker-a'
+    h.validate(pod)
+
+
+@pytest.mark.parametrize('key', ['reason', 'regenerate', 'approved_by', 'utc'])
+@pytest.mark.parametrize('value', [None, '', '  ', 42])
+def test_path_exclusion_requires_metadata(setup, key, value):
+    entry = bulk_exclusion()
+    if value is None:
+        entry.pop(key)
+    else:
+        entry[key] = value
+    setup[1]['harvest_exclude_paths'] = [entry]
+    with pytest.raises(ValueError, match='harvest_exclude_paths'):
+        h.validate(setup[1])
+
+
+@pytest.mark.parametrize('path', ['/workspace/other/states', '../states', 'results/../states',
+                                  'results/..', 'results/*', 'results/?', 'results/[ab]', '.', '',
+                                  './states', 'results//states', 'results/states/', 'results\\states',
+                                  'results\nstates', 'results/\x7fstates', None])
+def test_path_exclusion_rejects_unsafe_paths_before_transport(setup, path):
+    setup[1]['harvest_exclude_paths'] = [bulk_exclusion(path=path)]
+    with pytest.raises(ValueError, match='harvest_exclude_paths'):
+        h.validate(setup[1])
+    assert not run(setup)['verified']
+    assert not setup[3].calls
+
+
+@pytest.mark.parametrize('bad', [None, {}, 'native_states', [None], [bulk_exclusion(root='/workspace/other')],
+                                 [bulk_exclusion(utc='2026-11-03T21:00:00')],
+                                 [bulk_exclusion(utc='not-a-time')],
+                                 [bulk_exclusion(utc='2026-11-03T21:00:00+01:00')],
+                                 [bulk_exclusion(), bulk_exclusion()],
+                                 [bulk_exclusion(), bulk_exclusion(path='results/F057/native_states/deeper')]])
+def test_path_exclusion_rejects_invalid_declarations(setup, bad):
+    setup[1]['harvest_exclude_paths'] = bad
+    with pytest.raises(ValueError, match='harvest_exclude_paths'):
+        h.validate(setup[1])
+
+
+@pytest.mark.parametrize('key,value', [('path', 'results/F057/other'), ('reason', 'revised reason'),
+                                      ('regenerate', 'new recipe; receipts/arms.json'), ('approved_by', 'owner'),
+                                      ('utc', '2026-11-03T22:00:00Z')])
+def test_path_exclusion_metadata_changes_scope_and_freshness(setup, key, value):
+    pod = setup[1]
+    original = h.scope(pod)
+    assert run(setup)['verified']
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    selected = h.scope(pod)
+    assert selected != original
+    assert h.lint(setup[0], [pod], setup[4])
+    pod['harvest_exclude_paths'][0][key] = value
+    assert h.scope(pod) != selected
+    pod['harvest_exclude_paths'] = []
+    assert h.scope(pod) == original
+
+
+def test_path_exclusion_order_does_not_change_scope(setup):
+    pod = setup[1]
+    pod['harvest_exclude_paths'] = [bulk_exclusion(), bulk_exclusion(path='results/other')]
+    selected = h.scope(pod)
+    pod['harvest_exclude_paths'].reverse()
+    assert h.scope(pod) == selected
+
+
+def test_reader_counts_only_exact_subtree_without_opening_payload(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    excluded = tmp_path / 'results/F057/native_states'
+    excluded.mkdir(parents=True)
+    (excluded / 'arm').write_bytes(b'1234567')
+    (excluded / 'nested').mkdir()
+    (excluded / 'nested/arm').write_bytes(b'12345')
+    (excluded / 'empty').write_bytes(b'')
+    # Count oversized and media files by metadata too, without inspecting them.
+    with (excluded / 'huge.mp4').open('wb') as f:
+        f.truncate(h.MAX_BYTES + 1)
+    (excluded / 'link').symlink_to(tmp_path)
+    os.mkfifo(excluded / 'fifo')
+    siblings = ['results/F057/receipts/arms.json', 'results/F057/native_states_backup/arm',
+                'results/other/native_states/arm']
+    for relative in siblings:
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'research')
+    original_opened = reader.opened
+    def opened(path, directory=False):
+        if path == str(excluded) or path.startswith(str(excluded) + '/'):
+            assert directory, 'excluded payload opened'
+        return original_opened(path, directory=directory)
+    monkeypatch.setattr(reader, 'opened', opened)
+    original_inspect = reader.inspect
+    inspected = []
+    def inspect(path):
+        assert not path.startswith(str(excluded) + '/')
+        inspected.append(path)
+        return original_inspect(path)
+    monkeypatch.setattr(reader, 'inspect', inspect)
+    declaration = bulk_exclusion()
+    found = list(reader.manifest([str(tmp_path)], [], [declaration]))
+    reports = [r for r in found if r.get('skip') == 'excluded_path']
+    assert reports == [dict(path=str(excluded), skip='excluded_path', files=4, bytes=h.MAX_BYTES+13, present=True)]
+    assert set(inspected) == {str(tmp_path / relative) for relative in siblings}
+    assert {r['path'] for r in found if 'sha256' in r} == set(inspected)
+
+
+def test_reader_missing_exclusion_is_recorded(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    assert list(reader.manifest([str(tmp_path)], [], [bulk_exclusion()])) == [
+        dict(path=str(tmp_path / bulk_exclusion()['path']), skip='excluded_path', files=0, bytes=0, present=False)]
+
+
+@pytest.mark.parametrize('kind', ['symlink', 'unreadable'])
+def test_reader_exclusion_count_failure_is_reported(tmp_path, monkeypatch, kind):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    path = tmp_path / bulk_exclusion()['path']
+    path.parent.mkdir(parents=True)
+    if kind == 'symlink':
+        path.symlink_to(tmp_path, target_is_directory=True)
+    else:
+        path.mkdir()
+        monkeypatch.setattr(reader, 'exclusion_counts', Mock(side_effect=PermissionError()))
+    found = list(reader.manifest([str(tmp_path)], [], [bulk_exclusion()]))
+    assert found == [dict(path=str(path), error='exclusion_count_failed')]
+
+
+def test_reader_get_refuses_excluded_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    path = str(tmp_path / bulk_exclusion()['path'] / 'arm')
+    request = dict(op='get', path=path, size=1, sha256='a'*64)
+    monkeypatch.setattr(reader.sys, 'stdin', io.StringIO(base64.b64encode(json.dumps(request).encode()).decode()+'\n'))
+    inspect = Mock(side_effect=AssertionError('excluded content must not be read'))
+    monkeypatch.setattr(reader, 'inspect', inspect)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        reader.serve('TOKEN:', [str(tmp_path)], [], [bulk_exclusion()])
+    frames = [json.loads(base64.b64decode(line[6:])) for line in output.getvalue().splitlines() if line.startswith('TOKEN:')]
+    assert frames == [dict(ready=True), dict(end=True, error='remote_read_failed')]
+    inspect.assert_not_called()
+
+
+def test_path_exclusion_snapshot_manifest_sibling_and_lint(setup, monkeypatch, capsys):
+    root, pod, _, fake, clock, _ = setup
+    source_root = root / 'remote-fixture'
+    source_root.mkdir()
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    relative_files = {'results/F057/native_states/arm1': b'large states',
+                      'results/F057/native_states/nested/arm2': b'other states',
+                      'results/F057/receipts/arms.json': b'{"inputs":"pinned"}',
+                      'results/F057/native_states_backup/arm': b'sibling'}
+    for relative, data in relative_files.items():
+        path = source_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    monkeypatch.setattr(reader, 'valid', lambda p: p.startswith(str(source_root)) or p.startswith('/workspace/'))
+    def manifest(self):
+        declarations = [dict(entry, root=str(source_root)) for entry in self.pod['harvest_exclude_paths']]
+        for item in reader.manifest([str(source_root)], [], declarations):
+            yield dict(item, path='/workspace/worker-a' + item['path'][len(str(source_root)):])
+        yield dict(end=True)
+    def download(self, item, target):
+        relative = item['path'].removeprefix('/workspace/worker-a/')
+        assert not relative.startswith(bulk_exclusion()['path'] + '/')
+        self.calls.append(item['path'])
+        target.write(relative_files[relative])
+    monkeypatch.setattr(fake, 'manifest', manifest)
+    monkeypatch.setattr(fake, 'download', download)
+    row = run(setup)
+    assert row['verified'] and not row['errors']
+    assert row['snapshot_files'] == row['verified_files'] == row['files'] == 2
+    assert row['verified_bytes'] == row['snapshot_bytes'] == len(relative_files['results/F057/receipts/arms.json']) + len(b'sibling')
+    record = json.loads((Path(row['snapshot']) / 'MANIFEST.json').read_text())
+    entry = record['harvest_exclude_paths'][0]
+    for key, value in bulk_exclusion().items():
+        assert entry[key] == value
+    assert entry['files'] == 2 and entry['bytes'] == len(b'large statesother states') and entry['present']
+    assert all('/native_states/' not in path for path in record['files_index'])
+    assert not (Path(row['snapshot']) / 'workspace/worker-a/results/F057/native_states').exists()
+    assert len(fake.calls) == 2
+    (root / 'pods.json').write_text(json.dumps([pod]))
+    clock.rows = h.rows
+    info = []
+    assert not pods.lint(root / 'lanes/team', clock, info=info)
+    assert len(info) == 1 and 'excluded: pod-a/worker-a/results/F057/native_states, 2 files, 0.000 GB, regenerate:' in info[0]
+    result = dict(lane='team', depth=3, warnings=[], failures=[], grandfathered=[], info=info)
+    rh.print_lint(result)
+    assert 'INFO team: excluded: pod-a/' in capsys.readouterr().out
+    monkeypatch.setattr(rh, 'now', clock.now)
+    assert rh.lint_result(root / 'lanes/team')['info'] == info
+    # Scope-specific lint never reuses counts from the old approval.
+    pod['harvest_exclude_paths'][0]['reason'] = 'new reason'
+    info = []
+    assert h.lint(root, [pod], clock, info=info)
+    assert 'counts unavailable' in info[0]
+
+
+@pytest.mark.parametrize('report', [None, dict(files=-1, bytes=0, present=True),
+                                   dict(files=True, bytes=0, present=True),
+                                   dict(files=2, bytes=0, present=False),
+                                   dict(files=2, bytes=None, present=True),
+                                   dict(files=2, bytes=4, present='yes'),
+                                   dict(files=2, bytes=4, present=True, path='/workspace/worker-a/other')])
+def test_missing_or_invalid_exclusion_reports_never_verify(setup, report):
+    pod, fake = setup[1], setup[3]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    if report is not None:
+        fake.extra = [dict(dict(path='/workspace/worker-a/' + bulk_exclusion()['path'], skip='excluded_path'), **report)]
+    row = run(setup)
+    assert not row['verified'] and row['errors']
+
+
+def test_duplicate_exclusion_report_fails(setup):
+    pod, fake = setup[1], setup[3]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    report = dict(path='/workspace/worker-a/' + bulk_exclusion()['path'], skip='excluded_path', files=2, bytes=8, present=True)
+    fake.extra = [report, report]
+    assert not run(setup)['verified']
+
+
+def test_excluded_payload_from_transport_is_never_downloaded(setup):
+    pod, content, fake = setup[1:4]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    content['/workspace/worker-a/' + bulk_exclusion()['path'] + '/arm'] = b'states'
+    row = run(setup)
+    assert not row['verified']
+    assert not any('/native_states/' in path for path in fake.calls)
+
+
+def test_exclusion_does_not_waive_missing_results_or_corrupt_sibling(setup):
+    pod, fake = setup[1], setup[3]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    fake.extra = [dict(path='/workspace/worker-a/' + bulk_exclusion()['path'], skip='excluded_path', files=2, bytes=8, present=True),
+                  dict(path='/workspace/worker-a/missing', error='results_path_unavailable')]
+    assert not run(setup)['verified']
+    fake.extra.pop()
+    fake.corrupt = True
+    setup[2]['/workspace/worker-a/results/x.json'] = b'changed sibling'
+    assert not run(setup)['verified']
+
+
+def test_reader_path_exclusion_selects_one_root_and_keeps_dependency_policy(tmp_path, monkeypatch):
+    monkeypatch.setattr(reader, 'valid', lambda p: str(p).startswith(str(tmp_path)))
+    first, second = tmp_path / 'one', tmp_path / 'two'
+    for root in (first, second):
+        for relative in ['F057/native_states/arm', 'F057/receipts/arms.json', '.lake/packages/dependency']:
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b'data')
+    roots = [str(first), str(second)]
+    entry = bulk_exclusion(path='F057/native_states', root=str(first))
+    found = list(reader.manifest(roots, ['.lake'], [entry]))
+    harvested = {r['path'] for r in found if 'sha256' in r}
+    assert harvested == {str(first / 'F057/receipts/arms.json'), str(second / 'F057/receipts/arms.json'),
+                         str(second / 'F057/native_states/arm')}
+    assert sum(r.get('skip') == 'excluded_dependency_directory' for r in found) == 2
+    assert [r for r in found if r.get('skip') == 'excluded_path'] == [
+        dict(path=str(first / 'F057/native_states'), skip='excluded_path', files=1, bytes=4, present=True)]
+
+
+def test_active_exclusion_without_history_has_info_and_still_fails_freshness(setup):
+    root, pod, _, _, clock, _ = setup
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    info = []
+    assert h.lint(root, [pod], clock, info=info)
+    assert len(info) == 1 and 'counts unavailable' in info[0]
+    assert bulk_exclusion()['regenerate'] in info[0]
+
+
+def test_exclusion_count_error_is_saved_with_metadata_and_never_verified(setup):
+    pod, fake = setup[1], setup[3]
+    pod['harvest_exclude_paths'] = [bulk_exclusion()]
+    fake.extra = [dict(path='/workspace/worker-a/' + bulk_exclusion()['path'], error='exclusion_count_failed')]
+    row = run(setup)
+    assert not row['verified']
+    record = json.loads((Path(row['snapshot']) / 'MANIFEST.json').read_text())
+    entry = record['harvest_exclude_paths'][0]
+    assert entry['files'] is None and entry['bytes'] is None and entry['present'] is None
+    assert entry['reason'] == bulk_exclusion()['reason']
+    assert entry['regenerate'] == bulk_exclusion()['regenerate']
+    assert record['verified_files'] == 1  # only the remaining sibling
+
+
+def test_media_filter_keeps_code_named_like_media_11_03():
+    """11-03: a pod's mime table called Snakemake .smk video, and .ts was treated as MPEG-TS; both are code."""
+    import harvest_reader as h
+    assert not h.media('MB24/sources/mras_workflow.smk', b'rule all:\n')
+    assert not h.media('src/app.ts', b'import x from "y";\n' * 30)
+    ts = bytearray(600)
+    ts[0] = ts[188] = ts[376] = 0x47
+    assert h.media('capture.ts', bytes(ts))
+    assert h.media('clip.mp4', b'')

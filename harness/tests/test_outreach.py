@@ -333,3 +333,14 @@ def test_collision_ids_are_scoped_to_lane():
     draft = dict(id='same-id', lane='a', to_key='Contact Alpha')
     sent = dict(draft, lane='b', sent={'utc': now.isoformat()})
     assert outreach.collisions(draft, [sent], now) == [sent]
+
+
+def test_outreach_only_lane_skips_research_checks(tmp_path):
+    lane = tmp_path / 'lanes' / 'post-history'
+    lane.mkdir(parents=True)
+    (lane / 'OUTREACH.jsonl').write_text('')
+    assert rh.outreach_only(lane)
+    result = rh.lint_result(lane)
+    assert result['depth'] is None and not any(f['check'] in ('queue-depth', 'intake-freshness') for f in result['failures'])
+    (lane / 'IDEAS.jsonl').write_text('')
+    assert not rh.outreach_only(lane)
