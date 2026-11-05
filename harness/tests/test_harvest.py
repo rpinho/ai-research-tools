@@ -1324,8 +1324,9 @@ def test_media_filter_keeps_code_named_like_media_11_03():
 
 
 def test_a_prune_that_cannot_move_is_journaled_and_keeps_the_verified_run(setup, monkeypatch, tmp_path):
-    """11-04: a 30-second Trash timeout killed the prune, so six good harvests of friends/fz67
-    were journaled unverified and notified as "results not copied" although the copy worked.
+    """11-04: a Trash move that hit its timeout killed the prune, so six good harvests of
+    friends/fz67 were journaled unverified and notified as "results not copied" although the
+    copy had worked and the snapshot's own MANIFEST said verified.
     Disposal is the last act of an already verified harvest: its failure keeps the snapshot,
     records its own event, and says nothing about the copy.
     """
@@ -1352,7 +1353,7 @@ def test_a_prune_that_cannot_move_is_journaled_and_keeps_the_verified_run(setup,
 
 
 def test_trash_budget_grows_with_the_tree_and_stops_at_the_ceiling(tmp_path, monkeypatch):
-    """A fixed 30 seconds fitted one alert file and no snapshot; the budget now counts."""
+    """A flat 30 seconds was a thin ceiling for a tree; the budget now scales with one."""
     one = tmp_path / 'alert.json'
     one.write_text('{}')
     assert storage.timeout(one) == pytest.approx(storage.TIMEOUT_FLOOR + storage.TIMEOUT_PER_ENTRY)

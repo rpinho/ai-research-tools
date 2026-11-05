@@ -4,13 +4,14 @@ from pathlib import Path
 import subprocess
 import settings
 
-# Moving a tree to the Trash is per-item work, so one fixed budget cannot fit both a single
-# alert file and a snapshot of several hundred. A few hundred files exceeded 30 seconds on a
-# volume at 92% capacity: the move was killed, the snapshot stayed on disk, and the harvest
-# that had already copied and verified it was recorded as a failure (friends/fz67, 11-04,
-# six times). The budget therefore grows with the size of the tree. It is a ceiling on a
-# hang, not a wait, so it is generous; counting stops once the ceiling is reached, because
-# a tree larger than that gets the ceiling either way.
+# A flat 30 seconds was too thin a ceiling. On a quiet machine this is a rename and the
+# size does not matter: 58,464 entries moved in 0.44 s when measured. But six disposals of
+# one friends/fz67 snapshot hit the 30 s timeout on 11-04, on a volume at 92% capacity with
+# tens of GB already in the Trash, and each killed move left the snapshot on disk and the
+# harvest that had copied and verified it recorded as a failure. The condition is not
+# reproduced, so the ceiling now simply scales with the tree rather than pretending to know
+# the cost per file. It bounds a hang, not a wait, so it is generous; counting stops once
+# the ceiling is reached, because a larger tree gets the ceiling either way.
 TIMEOUT_FLOOR = 60
 TIMEOUT_PER_ENTRY = 0.2
 TIMEOUT_CEILING = 1800
