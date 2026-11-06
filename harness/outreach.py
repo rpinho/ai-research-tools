@@ -3,6 +3,7 @@ import settings
 import claim_evidence
 import mixed_language
 import ops_mentions
+import promise_words
 import datetime as dt
 import contextlib
 import fcntl
@@ -387,7 +388,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
     results = {}
     for row in selected:
         checks = dict(voice=[], questions=[], contact=[], collision=[], links=[], science=[],
-                      language=[], evidence=[], ops=[])
+                      language=[], evidence=[], ops=[], promise=[])
         try:
             text = body(row)
         except (OSError, UnicodeError):
@@ -423,6 +424,11 @@ def lint_rows(lane, selected, rh, allow_collision=None):
         ops_warnings = []
         if row['channel'] not in X_PUBLIC:
             checks['ops'], ops_warnings = ops_mentions.findings(text, row.get('asked_about', []))
+        # Don't sell an unrefereed result (Ricardo, 11-02, after a friends email ranked unrefereed
+        # lane results as "most promising"). The verdict has to be in the words the recipient
+        # reads, not only in our ledger, which they cannot see. Public posts are covered too: the
+        # rule is about overstating a result, and that is worse in public, not better.
+        checks['promise'], promise_warnings = promise_words.findings(text)
         # Mixed language: the technical paragraphs in English, the rest in the recipient's own.
         checks['language'], language_warnings = mixed_language.findings(
             text, language if row['channel'] == 'email' else None, row.get('attachments', []))
@@ -451,7 +457,8 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                                           'as a template'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
                 batch_warnings.append('comparison draft unreadable: ' + other['id'])
-        warnings = list(language_warnings) + evidence_warnings + ops_warnings + batch_warnings
+        warnings = (list(language_warnings) + evidence_warnings + ops_warnings
+                    + promise_warnings + batch_warnings)
         if row['channel'] in X_PUBLIC:
             checks['reach'], reach_warnings = x_checks(row, text, everyone, clock, selected)
             warnings += reach_warnings
