@@ -217,13 +217,18 @@ def main(argv=None):
     add.add_argument('--tolerance', type=float, default=DEFAULT_TOLERANCE)
     add.add_argument('--json-key', default='', help='read the number from this key of a JSON line')
     add.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT)
+    add.add_argument('--tag', action='append', default=[],
+                     help='label for filtering `check`, e.g. slow; repeatable')
     add.add_argument('--higher-is-better', dest='hib', action='store_true', default=None)
     add.add_argument('--lower-is-better', dest='hib', action='store_false')
 
     one = sub.add_parser('run', help='re-run one baseline and print its number')
     one.add_argument('--name', required=True)
 
-    sub.add_parser('check', help='re-run every baseline; non-zero if any stopped reproducing')
+    chk = sub.add_parser('check', help='re-run every baseline; non-zero if any stopped reproducing')
+    chk.add_argument('--tag', action='append', default=[], help='only baselines with this tag')
+    chk.add_argument('--skip-tag', action='append', default=[],
+                     help='leave these out; math asked for it because one C86 check takes 5 min')
     sub.add_parser('list', help='what this lane can reproduce')
 
     a = p.parse_args(argv)
@@ -248,7 +253,7 @@ def main(argv=None):
             return 2
         row = dict(name=a.name, source=a.source, published=pub, published_src=pub_src, cmd=a.cmd,
                    metric=a.metric, tolerance=a.tolerance, timeout=a.timeout,
-                   json_key=a.json_key or None, higher_is_better=a.hib,
+                   json_key=a.json_key or None, higher_is_better=a.hib, tags=sorted(set(a.tag)),
                    cmd_sha256=hashlib.sha256(a.cmd.encode()).hexdigest()[:16])
         ok, value, detail = reproduce(row, cwd)
         if not ok:
@@ -268,14 +273,30 @@ def main(argv=None):
             print('no baselines yet. Register one with `baseline.py --lane L add`.')
             return 0
         for name, row in sorted(rows.items()):
-            print('{:28} {:<16} {}  [{}]'.format(name, row.get('metric') or '-',
-                                                 row['published'], row.get('source', '')[:60]))
+            tags = ' '.join(row.get('tags') or [])
+            print('{:28} {:<16} {}  [{}]{}'.format(name, row.get('metric') or '-',
+                                                   row['published'], row.get('source', '')[:60],
+                                                   '  tags: ' + tags if tags else ''))
         return 0
 
     if a.action == 'run' and a.name not in rows:
         print('no baseline called "{}" in {}'.format(a.name, ledger), file=sys.stderr)
         return 2
     targets = [rows[a.name]] if a.action == 'run' else sorted(rows.values(), key=lambda r: r['name'])
+    if a.action == 'check':
+        # A `run --name` is always honoured; only `check` filters, so a slow baseline can be
+        # excluded from the routine pass without becoming unreachable.
+        want, skip = set(a.tag or []), set(a.skip_tag or [])
+        chosen = []
+        for row in targets:
+            tags = set(row.get('tags') or [])
+            if want and not (tags & want):
+                continue
+            if tags & skip:
+                print('{:28} skip     tags: {}'.format(row['name'], ' '.join(sorted(tags & skip))))
+                continue
+            chosen.append(row)
+        targets = chosen
     if not targets:
         print('no baselines registered for this lane', file=sys.stderr)
         return 0

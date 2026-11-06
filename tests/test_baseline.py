@@ -166,3 +166,35 @@ def test_a_moved_snapshot_is_reported_not_silently_accepted(lane, capsys):
     assert bl.main(['--lane', str(lane), 'run', '--name', 'p']) == 2
     out = capsys.readouterr().out
     assert 'SOURCE' in out and '4.5' in out
+
+
+def test_check_can_skip_a_slow_baseline(lane, capsys):
+    """math asked for this: one of its C86 checks takes about five minutes."""
+    add(lane, '--name', 'quick', '--source', 'p', '--published', '1', '--cmd', 'echo 1')
+    add(lane, '--name', 'slow-one', '--source', 'p', '--published', '2', '--cmd', 'echo 2',
+        '--tag', 'slow')
+    assert bl.main(['--lane', str(lane), 'check', '--skip-tag', 'slow']) == 0
+    out = capsys.readouterr().out
+    assert 'slow-one' in out and 'skip' in out and 'quick' in out
+    # only-these also works
+    assert bl.main(['--lane', str(lane), 'check', '--tag', 'slow']) == 0
+    out = capsys.readouterr().out
+    assert 'slow-one' in out and 'quick' not in out
+
+
+def test_a_skipped_baseline_is_still_reachable_by_name(lane):
+    """Skipping must not make it unrunnable, or it quietly stops being checked at all."""
+    add(lane, '--name', 'slow-one', '--source', 'p', '--published', '2', '--cmd', 'echo 2',
+        '--tag', 'slow')
+    assert bl.main(['--lane', str(lane), 'run', '--name', 'slow-one']) == 0
+
+
+def test_a_skipped_baseline_that_drifts_is_not_reported_as_ok(lane, capsys):
+    """The honest risk of --skip-tag: it must not print a clean bill for what it did not run."""
+    (lane / 'v.txt').write_text('2\n')
+    add(lane, '--name', 'slow-one', '--source', 'p', '--published', '2', '--cmd', 'cat v.txt',
+        '--tag', 'slow')
+    (lane / 'v.txt').write_text('9\n')
+    assert bl.main(['--lane', str(lane), 'check', '--skip-tag', 'slow']) == 0
+    out = capsys.readouterr().out
+    assert 'skip' in out and 'ok' not in out.replace('slow-one', '')
