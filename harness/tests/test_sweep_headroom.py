@@ -208,3 +208,36 @@ def test_darwin_memory_uses_kernel_free_percentage_when_larger():
 def test_memory_floor_defaults_below_worker_cap():
     assert sweep.default_memory_floor({'memory_gib': 6}) == 2
     assert sweep.default_memory_floor({'memory_gib': 1}) == 1
+
+
+def test_the_disk_floor_announces_itself_once_per_episode(tmp_path, monkeypatch):
+    """11-06: the daily sweep refused every lane on this floor for a whole day in silence.
+    The lanes looked stopped and the conductor went looking for a model shortage.
+    """
+    import sweep as sw
+    queue = tmp_path / 'alerts.jsonl'
+    mark = tmp_path / 'mark'
+    monkeypatch.setenv('RH_AGENT_ALERTS', str(queue))
+    monkeypatch.setattr(sw, 'DISK_MARK', mark)
+    cfg = {'cwd': str(tmp_path), 'min_free_gib': 30}
+
+    class Usage:
+        free = 5 * 1024**3
+
+    monkeypatch.setattr(sw.shutil, 'disk_usage', lambda p: Usage())
+    for _ in range(3):  # five lanes refusing one full disk is one fact
+        with pytest.raises(ValueError, match='less than 30 GiB free'):
+            sw.disk_guard(cfg)
+    rows = [json.loads(l) for l in queue.read_text().splitlines() if l.strip()]
+    assert len(rows) == 1, 'alerted once, not once per lane'
+    assert '5.0 GiB free' in rows[0]['message'] and 'needs 30 GiB' in rows[0]['message']
+    assert mark.exists()
+
+    # Clearing the floor retires the marker, so the next episode alerts again.
+    Usage.free = 80 * 1024**3
+    sw.disk_guard(cfg)
+    assert not mark.exists()
+    Usage.free = 5 * 1024**3
+    with pytest.raises(ValueError):
+        sw.disk_guard(cfg)
+    assert len([l for l in queue.read_text().splitlines() if l.strip()]) == 2

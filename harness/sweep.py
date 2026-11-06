@@ -486,9 +486,41 @@ def check(paths, due, cfg=None, known_ids=None):
     return errors
 
 
+DISK_MARK = settings.path('RH_SWEEP_DISK_MARK', Path('.runtime/sweep-disk-refused'))
+
+
 def disk_guard(cfg):
-    if shutil.disk_usage(cfg['cwd']).free < cfg['min_free_gib'] * 1024**3:
-        raise ValueError('sweep refused: less than {} GiB free'.format(cfg['min_free_gib']))
+    """Refuse below the disk floor, and say so once per episode.
+
+    Why (2026-11-06): the daily sweep refused every lane on this floor for a whole day and
+    nothing said so. The lanes looked stopped, the cause was one line in a log nobody reads,
+    and the conductor spent the next morning looking for a model shortage instead. A refusal
+    that stops every lane has to announce itself.
+
+    Once per episode, not once per lane per run: five lanes refusing the same full disk is one
+    fact. The marker clears the first time the floor is met, so a new episode alerts again.
+    """
+    free = shutil.disk_usage(cfg['cwd']).free
+    if free >= cfg['min_free_gib'] * 1024**3:
+        try:
+            DISK_MARK.unlink()
+        except OSError:
+            pass
+        return
+    if not DISK_MARK.exists():
+        try:
+            DISK_MARK.parent.mkdir(parents=True, exist_ok=True)
+            DISK_MARK.write_text(dt.datetime.now(dt.timezone.utc).isoformat(timespec='seconds'))
+        except OSError:
+            pass
+        try:
+            import lane_alerts
+            lane_alerts.push(
+                'sweep refused on the disk floor: {:.1f} GiB free, needs {} GiB. Every lane '
+                'stays stopped until this clears.'.format(free / 1024**3, cfg['min_free_gib']))
+        except (ImportError, OSError):
+            pass
+    raise ValueError('sweep refused: less than {} GiB free'.format(cfg['min_free_gib']))
 
 
 def cpu_busy():
