@@ -4,7 +4,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools' / 'sbs'))
-sys.path.insert(0, str(ROOT / 'tools' / 'result-lint'))
+sys.path.insert(0, str(ROOT / 'harness' / 'tools'))  # result_lint and sbs both live here
 from sbs import sbs  # noqa: E402
 from result_lint import lint  # noqa: E402
 
@@ -69,7 +69,7 @@ def test_predictive_claim_needs_matching_baselines(tmp_path):
 
 def test_cli_exit_codes(tmp_path):
     (tmp_path / 'CLAIM.md').write_text(GOOD)
-    cli = [sys.executable, str(ROOT / 'tools' / 'result-lint' / 'result_lint.py'), str(tmp_path)]
+    cli = [sys.executable, str(ROOT / 'harness' / 'tools' / 'result_lint.py'), str(tmp_path)]
     assert subprocess.run(cli, capture_output=True).returncode == 0
     (tmp_path / 'CLAIM.md').write_text('no header\n')
     assert subprocess.run(cli, capture_output=True).returncode == 1

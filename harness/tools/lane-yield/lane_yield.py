@@ -37,9 +37,13 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
-LINT = HERE.parents[3] / 'tools' / 'result-lint'
+# result_lint sits beside this tool's directory in BOTH layouts: harness/tools in the
+# repo, tools/ in the install. Before 11-06 this was parents[3]/'tools'/'result-lint',
+# which only resolved in the repo, so ~/.local/bin/lane-yield had to symlink to the
+# working tree and the installed copy could not even import. A yield test that fails
+# to start is a dry lane spinning instead of being told to change direction.
+LINT = HERE.parents[1]
 sys.path.insert(0, str(LINT))
-sys.path.insert(0, str(LINT.parent / 'sbs'))
 from result_lint import lint  # noqa: E402
 
 DEFAULTS = dict(window_hours=48, max_job_hours_without_new=20, min_verdicts=20, max_pass_share=0.9,
