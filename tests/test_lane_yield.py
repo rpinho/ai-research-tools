@@ -216,3 +216,62 @@ def test_a_rerun_row_is_not_counted_as_yield(tmp_path):
         f.write(json.dumps(dict(utc=stamp, new=True, kind='value', what='a bound',
                                 link='https://github.com/t/p/pull/9', referee='HOLDS')) + '\n')
     assert ly.check_lane('f', cfg, now)['new_yes'] == 1
+
+
+def rounds_file(tmp_path, outcomes, family='boltzgen', spend=5.0):
+    p = tmp_path / 'ROUNDS.jsonl'
+    with open(p, 'a') as f:
+        for i, o in enumerate(outcomes):
+            fam = family if isinstance(family, str) else family[i]
+            f.write(json.dumps(dict(utc='2026-11-06T%02d:00:00Z' % i, round='R%d' % (41 + i),
+                                    family=fam, outcome=o, spend_usd=spend,
+                                    provider='JapanFold')) + '\n')
+    return p
+
+
+def test_a_dry_streak_fails_the_lane_and_binds_even_when_report_only(tmp_path, monkeypatch):
+    """c5, 11-06: it is report_only, so DRY_ROUNDS never did anything through ~80 rounds in one
+    method family and ~$340 of external API spend. The verdict now binds on every lane, and it
+    asks for a different method rather than stopping the lane.
+    """
+    now = time.time()
+    led = rounds_file(tmp_path, ['dry', 'dry', 'dry'])
+    cfg = dict(logs=[], claims=[], rounds=[str(led)], hold=str(tmp_path / 'HOLD'),
+               direction_file=str(tmp_path / 'CHANGE_DIRECTION'), report_only=True)
+    r = ly.check_lane('c5', cfg, now)
+    assert r['status'] == 'FAIL'
+    fail = next(f for f in r['fails'] if f.startswith('DRY_STREAK'))
+    assert '3 rounds in a row' in fail and 'boltzgen' in fail and '$15 logged' in fail
+    assert 'different family' in fail
+    monkeypatch.setattr(ly.Path, 'home', lambda: tmp_path)  # no real tell-general push
+    ly.act(r, cfg)
+    assert not (tmp_path / 'HOLD').exists(), 'a dry streak redirects, it does not stop the lane'
+    assert 'CHANGE DIRECTION' in (tmp_path / 'CHANGE_DIRECTION').read_text()
+
+
+def test_a_selective_round_clears_the_streak(tmp_path):
+    now = time.time()
+    led = rounds_file(tmp_path, ['dry', 'dry', 'dry', 'selective'])
+    cfg = dict(logs=[], claims=[], rounds=[str(led)], hold=str(tmp_path / 'HOLD'))
+    assert ly.check_lane('c5', cfg, now)['status'] == 'PASS'
+
+
+def test_a_crashed_round_does_not_reset_the_dry_streak(tmp_path):
+    now = time.time()
+    led = rounds_file(tmp_path, ['dry', 'failed', 'dry'])
+    cfg = dict(logs=[], claims=[], rounds=[str(led)], hold=str(tmp_path / 'HOLD'))
+    assert any(f.startswith('DRY_STREAK') for f in ly.check_lane('c5', cfg, now)['fails'])
+
+
+def test_a_mixed_family_streak_is_still_a_streak_without_naming_one(tmp_path):
+    now = time.time()
+    led = rounds_file(tmp_path, ['dry', 'dry', 'dry'], family=['a', 'b', 'c'])
+    cfg = dict(logs=[], claims=[], rounds=[str(led)], hold=str(tmp_path / 'HOLD'))
+    fail = next(f for f in ly.check_lane('c5', cfg, now)['fails'] if f.startswith('DRY_STREAK'))
+    assert '3 rounds in a row' in fail and 'family "' not in fail
+
+
+def test_a_lane_with_no_rounds_ledger_is_unaffected(tmp_path):
+    now = time.time()
+    cfg = dict(logs=[], claims=[], hold=str(tmp_path / 'HOLD'))
+    assert ly.check_lane('math', cfg, now)['status'] == 'PASS'

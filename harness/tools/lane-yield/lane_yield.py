@@ -43,7 +43,46 @@ sys.path.insert(0, str(LINT.parent / 'sbs'))
 from result_lint import lint  # noqa: E402
 
 DEFAULTS = dict(window_hours=48, max_job_hours_without_new=20, min_verdicts=20, max_pass_share=0.9,
-                max_attempts_without_new=0)
+                max_attempts_without_new=0, max_dry_streak=3)
+
+
+def read_rounds(path):
+    """Rows from a ROUNDS.jsonl, skipping corrupt lines rather than ignoring the file."""
+    rows = []
+    try:
+        lines = open(path, errors='replace').read().splitlines()
+    except OSError:
+        return rows
+    for line in lines:
+        if line.strip():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def dry_tail(rows):
+    """(streak, family, spend) for the run of rounds since the last selective one.
+
+    A `failed` round does not break the streak: it produced nothing selective either, and
+    counting a crash as a fresh start is how seventeen dry rounds look like scattered bad luck.
+    """
+    rows = sorted(rows, key=lambda r: str(r.get('utc') or ''))
+    streak, spend, families = 0, 0.0, []
+    for row in reversed(rows):
+        if row.get('outcome') == 'selective':
+            break
+        streak += 1
+        families.append(row.get('family'))
+        try:
+            spend += float(row.get('spend_usd') or 0)
+        except (TypeError, ValueError):
+            pass
+    same = families[0] if families and len(set(families)) == 1 else None
+    return streak, same, spend
 STAMP = re.compile(r'^(?:=== (?:run|attempt) .*?|exit \S+ )([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d:\d\d) \S+ (\d{4})\s*$')
 
 
@@ -189,6 +228,19 @@ def check_lane(name, cfg, now):
                      'Repeating an approach that is not working is activity, not progress: change the approach.')
     if verdicts >= c['min_verdicts'] and share >= c['max_pass_share']:
         fails.append(f'RUBBER_STAMP: referee passed {passes}/{verdicts} ({share:.0%}); a referee that passes everything is not refereeing')
+    # Rounds the harness can see (c5, 11-06): its rounds ran in-session against an external
+    # API, so launch.sh, log-result and the spend ledger all missed them and the yield test was
+    # blind to ~80 rounds and ~$340. `rounds.py log` writes one row per paid round.
+    round_rows = []
+    for g in c.get('rounds', []):
+        for p in glob.glob(os.path.expanduser(g)):
+            round_rows += read_rounds(p)
+    streak, family, round_spend = dry_tail(round_rows)
+    if streak >= c['max_dry_streak']:
+        fails.append(f'DRY_STREAK: {streak} rounds in a row produced nothing selective'
+                     + (f' (family "{family}", ${round_spend:.0f} logged)' if family else '')
+                     + '. A dry streak is evidence about the method, not bad luck: the next '
+                       'round must use a different family.')
     missing = unsurfaced(c['surface_audit']) if c.get('surface_audit') else {}
     if missing:
         n = sum(len(v) for v in missing.values())
@@ -202,7 +254,26 @@ def check_lane(name, cfg, now):
 
 def act(row, cfg):
     hold = cfg.get('hold')
-    spending = [f for f in row['fails'] if not f.startswith('UNSURFACED')]
+    # DRY_STREAK binds on every lane, report_only included (c5, 11-06: it is report_only, so
+    # DRY_ROUNDS never did anything through about 80 rounds in one method family). It writes a
+    # direction requirement rather than a hold, because the answer to a dry streak is a
+    # different method, not a stopped lane: `rounds.py check` refuses the next round in that
+    # family until the lane closes it and picks another.
+    streaks = [f for f in row['fails'] if f.startswith('DRY_STREAK')]
+    direction = cfg.get('direction_file')
+    if streaks and direction:
+        d = Path(os.path.expanduser(direction))
+        try:
+            d.parent.mkdir(parents=True, exist_ok=True)
+            d.write_text('CHANGE DIRECTION, set by lane-yield {}: {}\nThe next round must use a '
+                         'different method family. Close this one with `rounds.py close-family` '
+                         'and record what the KB already knew with `rounds.py consult`.\n'
+                         .format(row['as_of'], '; '.join(streaks)))
+        except OSError:
+            pass
+    # A paperwork gap and a direction change are not spending in circles, so neither holds.
+    spending = [f for f in row['fails']
+                if not f.startswith('UNSURFACED') and not f.startswith('DRY_STREAK')]
     if hold and spending and not cfg.get('report_only'):
         p = Path(os.path.expanduser(hold))
         if not p.exists():
