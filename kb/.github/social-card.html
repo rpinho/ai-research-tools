@@ -1,0 +1,44 @@
+<!doctype html><meta charset=utf-8>
+<style>
+  *{margin:0;box-sizing:border-box}
+  html,body{width:1280px;height:640px;overflow:hidden}
+  body{font:400 26px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    background:#0d1117;color:#e6edf3;position:relative;
+    background-image:radial-gradient(circle at 18% 22%,#16304a 0,transparent 42%),
+      radial-gradient(circle at 88% 82%,#1a2f22 0,transparent 46%);}
+  .wrap{position:absolute;inset:0;padding:74px 80px;display:flex;flex-direction:column}
+  .kicker{font-size:22px;letter-spacing:.22em;text-transform:uppercase;color:#6ea8fe;font-weight:600}
+  h1{font-size:82px;line-height:1.02;font-weight:800;margin:20px 0 0;letter-spacing:-.02em}
+  h1 .mono{font-family:"SF Mono",ui-monospace,Menlo,monospace}
+  .sub{font-size:32px;color:#9fb0c3;margin-top:22px;max-width:1000px;line-height:1.4}
+  .pipe{margin-top:40px;display:flex;align-items:center;gap:16px;font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:27px}
+  .box{padding:12px 22px;border-radius:12px;border:1px solid #2b3440;background:#161b22;color:#e6edf3}
+  .box.raw{border-color:#3b2f1c;color:#e3b341}
+  .box.wiki{border-color:#1c3a2a;color:#3fb950}
+  .box.idx{border-color:#1c2f4a;color:#6ea8fe}
+  .arr{color:#586069;font-size:30px}
+  .foot{margin-top:auto;display:flex;align-items:center;justify-content:space-between}
+  .repo{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:30px;color:#e6edf3}
+  .repo .slash{color:#6e7681}
+  .tags{font-size:22px;color:#8b949e}
+  .runtimes{font-size:23px;color:#8b949e;margin-top:6px}
+</style>
+<div class=wrap>
+  <div class=kicker>The persistent-agent memory layer</div>
+  <h1>An <span class=mono>agent</span>-maintained<br>knowledge base you own</h1>
+  <div class=sub>Clone it, point any coding agent at it, and it files what you read, decide, and learn into a durable, queryable wiki. The filesystem is the memory.</div>
+  <div class=pipe>
+    <span class="box raw">raw/ &nbsp;·&nbsp; immutable</span>
+    <span class=arr>&rarr;</span>
+    <span class="box wiki">wiki/ &nbsp;·&nbsp; compiled</span>
+    <span class=arr>&rarr;</span>
+    <span class="box idx">index · log · state</span>
+  </div>
+  <div class=foot>
+    <div>
+      <div class=repo>github.com<span class=slash>/</span>rpinho<span class=slash>/</span>agent-kb</div>
+      <div class=runtimes>Runtime-portable · Claude Code · Codex · Goose · MIT</div>
+    </div>
+    <div class=tags>#ai-agents&nbsp; #second-brain&nbsp; #llm</div>
+  </div>
+</div>

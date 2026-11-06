@@ -1,0 +1,33 @@
+# Secrets & local config — never commit
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Local scratch / generated
+wiki.html
+*.log
+.DS_Store
+
+# Large/sensitive source types kept local-only by default (uncomment as needed)
+# *.pdf
+# raw/private/
+
+# Runtime/editor
+.venv/
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+
+# generated build artifact
+raw/_index/entities.json
+
+# Per-machine / private config (never commit)
+.claude/settings.local.json
+home-links.json
+outbox/.*.log
+
+# Big untracked-by-design folders (originals you drop in for the agent to file)
+inbox/

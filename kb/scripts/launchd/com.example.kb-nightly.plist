@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS LaunchAgent for the scheduled run. Copy to ~/Library/LaunchAgents/, replace the
+  placeholders, then:  launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.example.kb-nightly.plist
+  Test it once by hand first:  NIGHTLY_TEST=1 /path/to/your-kb/scripts/nightly/run.sh
+  The machine must be awake at the scheduled time (pmset / Energy settings).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.example.kb-nightly</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>/ABSOLUTE/PATH/TO/your-kb/scripts/nightly/run.sh</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>KB_ROOT</key><string>/ABSOLUTE/PATH/TO/your-kb</string>
+    <key>CLAUDE_TOKEN_FILE</key><string>/ABSOLUTE/PATH/TO/a-0600-token-file-outside-the-repo</string>
+    <key>DIGEST_SEND_CMD</key><string>/ABSOLUTE/PATH/TO/your-send-script</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>17</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/kb-nightly.launchd.log</string>
+  <key>StandardErrorPath</key><string>/tmp/kb-nightly.launchd.log</string>
+</dict>
+</plist>

@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# KB pre-commit guard: rules that used to live only in prose, promoted to checks.
+#
+# The enforcement hierarchy this repo follows:  architecture > compiler > CI/lint > prose.
+# A rule written only in AGENTS.md is the weakest kind, because nothing enforces it. Every
+# check below started life as a sentence in AGENTS.md and was violated anyway:
+#   * "commit only from a worktree"   -> an agent committed straight onto main
+#   * "raw files are immutable"        -> had no enforcement at all
+#   * "never git add -A"               -> invisible at commit time, so we bound its blast radius
+#   * "every ingest reaches the digest" -> daytime ingests silently skipped the next digest
+#   * "hand-over docs must match state.md" -> a printed sheet claimed absence of a live open item
+#
+# Install once per clone (applies to the main tree and every worktree):
+#   git config core.hooksPath .githooks
+#
+# ESCAPE HATCHES (deliberate; each names itself in the output):
+#   KB_ALLOW_MAIN_COMMIT=1   commit from the main tree anyway
+#   KB_ALLOW_RAW_EDIT=1      modify/delete files under raw/
+#   KB_BULK_OK=1             stage more than $BULK_LIMIT files
+#   KB_NO_LEDGER=1           add raw/ files without a day-ledger entry (backfills only)
+#   KB_NIGHTLY=1             set by the scheduled run, which CONSUMES the ledger
+#   KB_PREP_LINT_SKIP=1      commit a hand-over doc that contradicts state.md
+set -uo pipefail
+
+BULK_LIMIT="${KB_BULK_LIMIT:-40}"
+# Paths that must never enter history. Extend for your own private folders.
+# NOTE: extension patterns must sit OUTSIDE the (^|/) group: `(^|/)(...|\.pem$)` silently lets
+# `certs/server.pem` through, because it requires a path SEGMENT starting with ".pem".
+NEVER_COMMIT='(^|/)(private|secrets|records)/|(^|/)\.env(\..*)?$|(^|/)id_(rsa|ed25519)|\.pem$|\.p12$|\.key$|(^|/)credentials(\.json)?$'
+
+fail=0
+say() { printf '  %s\n' "$*" >&2; }
+die() { printf '\n\033[31mx pre-commit: %s\033[0m\n' "$1" >&2; fail=1; }
+
+# ------------------------------------------------------------------ 1. worktree guard
+# A linked worktree's ABSOLUTE git-dir contains /worktrees/; the main tree's does not.
+# Do NOT path-match the toplevel: a worktree can legitimately live inside the main tree's path.
+agd=$(git rev-parse --absolute-git-dir 2>/dev/null || echo "")
+case "$agd" in
+  */worktrees/*) ;;
+  *)
+    if [ "${KB_ALLOW_MAIN_COMMIT:-}" != "1" ]; then
+      die "COMMIT FROM THE MAIN TREE, NOT A WORKTREE."
+      say "toplevel: $(git rev-parse --show-toplevel)"
+      say "All tracked edits and all commits happen in a session worktree, then you land (see the land skill)."
+      say "Override (rarely right): KB_ALLOW_MAIN_COMMIT=1 git commit ..."
+    else
+      say "! main-tree commit allowed via KB_ALLOW_MAIN_COMMIT=1"
+    fi
+    ;;
+esac
+
+staged=$(git diff --cached --name-only --diff-filter=ACMRD 2>/dev/null)
+[ -z "$staged" ] && { [ "$fail" -eq 1 ] && exit 1; exit 0; }
+
+# ------------------------------------------------------------------ 2. raw/ immutability
+# Additions are fine; modifications and deletions are not. raw/_index/ is GENERATED metadata
+# (ledgers, entity index) and is exempt, or this would block routine work.
+raw_touched=$(git diff --cached --name-only --diff-filter=MD | grep '^raw/' | grep -v '^raw/_index/' || true)
+if [ -n "$raw_touched" ] && [ "${KB_ALLOW_RAW_EDIT:-}" != "1" ]; then
+  die "RAW FILES ARE IMMUTABLE. These are modified or deleted, not added:"
+  printf '     %s\n' $raw_touched >&2
+  say "Override: KB_ALLOW_RAW_EDIT=1 git commit ..."
+fi
+
+# ------------------------------------------------------------------ 3. never-commit paths
+blocked=$(printf '%s\n' "$staged" | grep -Ei "$NEVER_COMMIT" || true)
+if [ -n "$blocked" ]; then
+  die "NEVER-COMMIT PATH STAGED:"
+  printf '     %s\n' $blocked >&2
+  say "These look like secrets or private records. No override: unstage them (git restore --staged <path>)."
+fi
+
+# ------------------------------------------------------------------ 4. intraday ledger
+# A daytime commit that ADDS files to raw/ is an ingest, and an ingest must leave a line in
+# raw/_index/day-ledger.jsonl so the next scheduled digest can see it (scripts/day-ledger.py).
+raw_added=$(git diff --cached --name-only --diff-filter=A | grep '^raw/' | grep -v '^raw/_index/' || true)
+ledger_staged=$(printf '%s\n' "$staged" | grep -c '^raw/_index/day-ledger.jsonl$' || true)
+if [ -n "$raw_added" ] && [ "$ledger_staged" -eq 0 ] && [ "${KB_NIGHTLY:-}" != "1" ] && [ "${KB_NO_LEDGER:-}" != "1" ]; then
+  die "INGEST WITHOUT A DAY-LEDGER ENTRY. New raw/ files are staged, but raw/_index/day-ledger.jsonl is not:"
+  printf '     %s\n' $raw_added | head -5 >&2
+  say "Record it for the next digest, then stage the ledger with this commit:"
+  say "  python3 scripts/day-ledger.py add --source <kind> --summary \"...\" [--authors a,b] [--pages \"A;B\"]"
+  say "Override (backfill only): KB_NO_LEDGER=1 git commit ..."
+fi
+
+# ------------------------------------------------------------------ 5. hand-over document lint
+# Anything that will be printed or read in a room (HTML under wiki/ or outbox/, or anything named
+# checklist / reference sheet / cheat sheet / cover letter / prep sheet) must not claim ABSENCE of
+# something state.md carries as open. scripts/prep-lint.py does the check.
+handover=$(printf '%s\n' "$staged" | grep -Ei '^(wiki|outbox)/.*\.html?$|(checklist|reference sheet|cheat sheet|cover letter|prep sheet)' | grep -Ev '\.(json|jsonl|png|jpg)$' || true)
+if [ -n "$handover" ] && [ "${KB_PREP_LINT_SKIP:-}" != "1" ] && [ -f scripts/prep-lint.py ]; then
+  existing=$(printf '%s\n' "$handover" | while IFS= read -r f; do [ -f "$f" ] && printf '%s\n' "$f"; done)
+  if [ -n "$existing" ] && ! out=$(printf '%s\n' "$existing" | tr '\n' '\0' | xargs -0 python3 scripts/prep-lint.py 2>&1); then
+    die "HAND-OVER DOC CONTRADICTS state.md (scripts/prep-lint.py):"
+    printf '%s\n' "$out" | sed 's/^/     /' >&2
+    say "Put the true state on the page, or mark a checked claim with <!-- verified: state.md YYYY-MM-DD -->."
+    say "Override (names itself): KB_PREP_LINT_SKIP=1 git commit ..."
+  fi
+fi
+
+# ------------------------------------------------------------------ 6. blast radius
+n=$(printf '%s\n' "$staged" | grep -c . || true)
+if [ "$n" -gt "$BULK_LIMIT" ] && [ "${KB_BULK_OK:-}" != "1" ]; then
+  die "$n FILES STAGED (limit $BULK_LIMIT). Did you run 'git add -A'?"
+  printf '%s\n' "$staged" | head -15 | sed 's/^/     /' >&2
+  say "Stage by explicit path. Override once you have looked: KB_BULK_OK=1 git commit ..."
+fi
+
+[ "$fail" -eq 1 ] && { printf '\n' >&2; exit 1; }
+exit 0

@@ -1,0 +1,241 @@
+{
+ "updated": "2026-11-02",
+ "rule": "min 5 outcomes over 2 days; pass only when Wilson low > rate above (seed rate 0.75); exclusion lift needs 20+",
+ "scope": {
+  "biology": "Computational analysis, modeling and literature only. No wet-lab protocols, and nothing that modifies, enhances or cultures an organism."
+ },
+ "want_to_try": {
+  "google/gemini-4-carbon": {
+   "roles": [
+    "review",
+    "taste"
+   ],
+   "enters": "the day it is on OpenRouter or the Gemini API",
+   "status": "announced 2026-10-28, cyber-defender access only, reported $2/$10; absent from Google's pricing page and from the OpenRouter catalog when both were checked on 2026-11-02"
+  },
+  "deep-principle/hydrogen-1.0": {
+   "roles": [
+    "biology",
+    "review"
+   ],
+   "enters": "the day it has a hosted route, or runs on one of our own pods",
+   "status": "open weights (MIT) on Hugging Face as deep-principle/Hydrogen-1.0, GLM-5.3 post-trained on lab records and discovery trajectories; 753B parameters in BF16, with MXFP4 and NVFP4 quantizations, so self-hosting means roughly 380 GB of VRAM in 4-bit (estimate) and a multi-GPU pod. No OpenRouter route and no hosted price when checked 2026-11-02. Its 38.3% FrontierScience-Research against Astra's 33.3% and 93.0% GPQA-Diamond are VENDOR-REPORTED and count for nothing here until our own matched tasks run"
+  }
+ },
+ "prices_usd_per_mtok": {
+  "anthropic/claude-opus-5.5": {
+   "in": 4,
+   "out": 20,
+   "cache_read": 0.2,
+   "checked": "2026-11-02"
+  },
+  "anthropic/claude-fable-5.1": {
+   "in": 10,
+   "out": 50,
+   "cache_read": 0.25,
+   "checked": "2026-11-02"
+  },
+  "anthropic/claude-sonnet-5.5": {
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.1,
+   "checked": "2026-11-02"
+  },
+  "openai/gpt-6-astra": {
+   "in": 10,
+   "out": 50,
+   "cache_read": 1.0,
+   "checked": "2026-11-02"
+  },
+  "openai/gpt-6.1-sol": {
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.1,
+   "checked": "2026-11-02"
+  },
+  "moonshotai/kimi-k3.1-pro": {
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.2,
+   "checked": "2026-11-02"
+  },
+  "google/gemini-4-argon": {
+   "in": 2,
+   "out": 10,
+   "cache_read": 0.1,
+   "checked": "2026-11-02"
+  },
+  "anthropic/claude-haiku-5.5": {
+   "in": 0.1,
+   "out": 0.5,
+   "cache_read": 0.01,
+   "checked": "2026-10-25"
+  },
+  "anthropic/claude-opus-4.6": {
+   "in": 5,
+   "out": 25,
+   "cache_read": 0.5,
+   "checked": "2026-10-25"
+  },
+  "openai/gpt-5.6-sol": {
+   "in": 4,
+   "out": 20,
+   "cache_read": 0.4,
+   "checked": "2026-10-25"
+  },
+  "openai/gpt-6.1-terra": {
+   "in": 1,
+   "out": 5,
+   "cache_read": 0.05,
+   "checked": "2026-10-27"
+  },
+  "openai/gpt-6-luna": {
+   "in": 0.1,
+   "out": 0.5,
+   "cache_read": 0.01,
+   "checked": "2026-10-25"
+  },
+  "deepseek/deepseek-v4.1-flash-1017": {
+   "in": 0.15,
+   "out": 0.6,
+   "cache_read": 0.003,
+   "checked": "2026-10-25"
+  },
+  "z-ai/glm-5.3-flash": {
+   "in": 0.15,
+   "out": 0.5,
+   "cache_read": 0.03,
+   "checked": "2026-10-26"
+  },
+  "x-ai/grok-4.6": {
+   "in": 2,
+   "out": 6,
+   "cache_read": 0.5,
+   "checked": "2026-10-25"
+  }
+ },
+ "roles": {
+  "taste": [
+   "anthropic/claude-opus-5.5",
+   "anthropic/claude-fable-5.1"
+  ],
+  "review": [
+   "anthropic/claude-opus-5.5",
+   "openai/gpt-6-astra",
+   "anthropic/claude-fable-5.1",
+   "openai/gpt-6.1-sol"
+  ],
+  "mechanical": [
+   "openai/gpt-6.1-sol",
+   "deepseek/deepseek-v4.1-flash-1017"
+  ],
+  "builder": [
+   "anthropic/claude-opus-5.5",
+   "openai/gpt-6.1-sol"
+  ],
+  "cheap": [
+   "deepseek/deepseek-v4.1-flash-1017",
+   "z-ai/glm-5.3-flash"
+  ],
+  "biology": [
+   "moonshotai/kimi-k3.1-pro"
+  ],
+  "batch": [
+   "openai/gpt-6.1-sol",
+   "deepseek/deepseek-v4.1-flash-1017"
+  ],
+  "writing": [
+   "anthropic/claude-opus-5.5"
+  ]
+ },
+ "evidence": {
+  "taste": {
+   "deepseek/deepseek-v4.1-flash-1017": {
+    "n": 1,
+    "rate": 0.0,
+    "low": 0.0,
+    "days": 1
+   },
+   "openai/gpt-6.1-sol": {
+    "n": 1,
+    "rate": 0.0,
+    "low": 0.0,
+    "days": 1
+   },
+   "anthropic/claude-opus-5.5": {
+    "n": 2,
+    "rate": 1.0,
+    "low": 0.342,
+    "days": 1
+   }
+  },
+  "review": {
+   "openai/gpt-6-astra": {
+    "n": 1,
+    "rate": 1.0,
+    "low": 0.207,
+    "days": 1
+   }
+  },
+  "mechanical": {
+   "openai/gpt-6.1-sol": {
+    "n": 1,
+    "rate": 1.0,
+    "low": 0.207,
+    "days": 1
+   },
+   "deepseek/deepseek-v4.1-flash-1017": {
+    "n": 3,
+    "rate": 1.0,
+    "low": 0.438,
+    "days": 1
+   }
+  },
+  "builder": {
+   "openai/gpt-6.1-sol": {
+    "n": 2,
+    "rate": 1.0,
+    "low": 0.342,
+    "days": 1
+   },
+   "deepseek/deepseek-v4.1-flash-1017": {
+    "n": 1,
+    "rate": 0.0,
+    "low": 0.0,
+    "days": 1
+   },
+   "anthropic/claude-opus-5.5": {
+    "n": 1,
+    "rate": 1.0,
+    "low": 0.207,
+    "days": 1
+   }
+  },
+  "cheap": {},
+  "biology": {},
+  "batch": {
+   "openai/gpt-6.1-sol": {
+    "n": 77,
+    "rate": 0.753,
+    "low": 0.646,
+    "days": 9
+   }
+  },
+  "writing": {
+   "anthropic/claude-opus-5.5": {
+    "n": 2,
+    "rate": 1.0,
+    "low": 0.342,
+    "days": 1
+   }
+  }
+ },
+ "excluded": {
+  "taste": [
+   {
+    "model": "openai/gpt-6.1-sol",
+    "reason": "owner's call: weak taste, until evidence says otherwise"
+   }
+  ]
+ }
+}

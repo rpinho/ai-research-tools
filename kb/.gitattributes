@@ -1,0 +1,5 @@
+# Append-only files: auto-merge by keeping BOTH sides' lines (no conflict markers), so parallel
+# session worktrees and the scheduled run never conflict on them.
+log.md merge=union
+# Intraday ledger (scripts/day-ledger.py): append-only JSONL, consumed by marker lines, never rewritten.
+raw/_index/day-ledger.jsonl merge=union
