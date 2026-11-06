@@ -31,6 +31,18 @@ own science in English. `rh outreach lint` fails a technical paragraph in their 
 opening or closing that is not in it, and an attachment that is not English; ordinary prose
 in English anywhere in the email is a warning, because it belongs in their language too.
 
+**No ops in friend emails (Ricardo, 11-06).** An email to a friend carries only what the
+friend needs. Never our infrastructure or operations: providers (RunPod, OpenRouter), pods,
+security incidents, key rotations, harness or watchdog details, or why something was re-run.
+Say "re-checked on my own machine; the numbers match." If the friend asks about one of these,
+answer in one plain line. The rule came from one sentence in an email of 11-05 — "The first
+two ran on a RunPod server that has since had a security incident" — which cost a round trip
+and told a friend about a host compromise he had no way to act on. `rh outreach lint` fails
+any non-public message carrying those terms (`OPS_DETAIL`); when the friend raised the subject
+themselves, name the term with `rh outreach draft --asked-about TERM` and it drops to a
+warning, so a reply can answer them. It takes a term from the check's own list, never the
+friend's words.
+
 **A result is not sendable until someone else rebuilt it (Ricardo, 11-05).** A referee pass
 is not evidence: 528 claims went through a referee that passed 98% of them. A result may go
 out when a **separate model rebuilt it from the public inputs with its own code and got the

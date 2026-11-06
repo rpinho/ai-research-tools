@@ -39,7 +39,7 @@ def cli(root, *args):
     return rc, out.getvalue(), err.getvalue()
 
 
-def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_name='test', attach=None, claim=None):
+def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_name='test', attach=None, claim=None, asked_about=()):
     root, _ = env
     path = root / ('body-' + str(len(list(root.glob('body-*')))) + '.txt')
     path.write_text(text or VARIED[0])
@@ -50,6 +50,8 @@ def draft(env, text=None, to='Contact Alpha', channel='email', batch=None, lane_
         args += ['--attach', attach]
     if claim:
         args += ['--claim', claim]
+    for term in asked_about:
+        args += ['--asked-about', term]
     rc, out, err = cli(root, *args)
     assert rc == 0, err
     return out.strip(), path
@@ -550,3 +552,48 @@ def test_the_science_checker_is_handed_the_claims(env):
     with patch.object(outreach, 'science_checks', return_value=[]) as check:
         assert cli(root, 'lint', 'test', ident)[0] == 0
     assert check.call_args.args[3] == [str(claim)]
+
+
+# The sentence this rule came from (Ricardo, 11-06): an email of 11-05 told a friend "The first
+# two ran on a RunPod server that has since had a security incident." He asked what it meant,
+# and Ricardo's read was "we shouldn't have said that. That was completely unnecessary to say."
+OPS_EMAIL = ('A sine wave has one extra peak. The first two ran on a RunPod server that has '
+             'since had a security incident, so I re-solved them on my own machine and the '
+             'optima match.\n\nRegards,\nOperator')
+
+
+def test_lint_fails_an_email_that_tells_a_friend_about_our_infrastructure(env):
+    root, lane = env
+    ident, _ = draft(env, OPS_EMAIL)
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 1 and 'ops: OPS_DETAIL: runpod' in out and 'security-incident' in out
+    assert 're-checked on my own machine' in out, 'the fix belongs in the failure'
+    assert outreach.current(lane, rh)[ident]['status'] == 'drafted'
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] != 0
+
+
+def test_lint_passes_an_email_that_answers_what_the_friend_asked_about(env):
+    """The friend asked what the sentence meant, so the reply has to be able to say the word."""
+    root, lane = env
+    ident, _ = draft(env, OPS_EMAIL, asked_about=['runpod', 'security-incident'])
+    rc, out, _ = cli(root, 'lint', 'test', ident)
+    assert rc == 0 and 'PASS' in out and 'WARN: ops: runpod' in out
+    assert outreach.current(lane, rh)[ident]['asked_about'] == ['runpod', 'security-incident']
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] == 0
+
+
+def test_asked_about_takes_only_the_known_terms_never_the_friends_words(env):
+    root, _ = env
+    path = root / 'typo.txt'
+    path.write_text(OPS_EMAIL)
+    for value in ('runpodd', 'que quer dizer isto'):
+        assert cli(root, 'draft', 'test', '--to', 'Contact Alpha', '--channel', 'email',
+                   '--purpose', 'Learn', '--file', path, '--asked-about', value)[0] == 2
+
+
+def test_the_ops_rule_leaves_a_public_post_alone(env):
+    """Ricardo names his own hosts and tools in public; this is about what a friend is told."""
+    ident, _ = draft(env, 'Re-solved 20 instances off a RunPod box. Optima match.',
+                     to='@scientist', channel='x_post')
+    rc, out, _ = cli(env[0], 'lint', 'test', ident)
+    assert rc == 0 and 'ops' not in out, out

@@ -2,6 +2,7 @@
 import settings
 import claim_evidence
 import mixed_language
+import ops_mentions
 import datetime as dt
 import contextlib
 import fcntl
@@ -386,7 +387,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
     results = {}
     for row in selected:
         checks = dict(voice=[], questions=[], contact=[], collision=[], links=[], science=[],
-                      language=[], evidence=[])
+                      language=[], evidence=[], ops=[])
         try:
             text = body(row)
         except (OSError, UnicodeError):
@@ -417,6 +418,11 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                 checks['collision'].append('recent send: {}/{}'.format(other['lane'], other['id']))
         evidence_warnings = []
         checks['links'] = link_errors(text)
+        # No ops in a message to a person (Ricardo, 11-06). A public post is not covered: Ricardo
+        # names his own tools and hosts in public, and this is about what a friend is told.
+        ops_warnings = []
+        if row['channel'] not in X_PUBLIC:
+            checks['ops'], ops_warnings = ops_mentions.findings(text, row.get('asked_about', []))
         # Mixed language: the technical paragraphs in English, the rest in the recipient's own.
         checks['language'], language_warnings = mixed_language.findings(
             text, language if row['channel'] == 'email' else None, row.get('attachments', []))
@@ -445,7 +451,7 @@ def lint_rows(lane, selected, rh, allow_collision=None):
                                           'as a template'.format(row['id'], other['id'], label, score))
             except (OSError, UnicodeError):
                 batch_warnings.append('comparison draft unreadable: ' + other['id'])
-        warnings = list(language_warnings) + evidence_warnings + batch_warnings
+        warnings = list(language_warnings) + evidence_warnings + ops_warnings + batch_warnings
         if row['channel'] in X_PUBLIC:
             checks['reach'], reach_warnings = x_checks(row, text, everyone, clock, selected)
             warnings += reach_warnings
@@ -513,6 +519,10 @@ def arguments(sub):
             p.add_argument('--project', action='append', default=[], help='stable project tag for the 48 h series check')
             p.add_argument('--attach', action='append', default=[], help='attached results, checked with the configured science command')
             p.add_argument('--claim', action='append', default=[], help='claim directory this reports; gated on its independent re-check')
+            p.add_argument('--asked-about', action='append', default=[], metavar='TERM',
+                           help='an ops term the recipient raised themselves ({}); it drops to '
+                                'a warning so a reply can answer them. A term from this list, '
+                                'never their words.'.format(', '.join(ops_mentions.vocabulary())))
         elif action in ('lint', 'approve'):
             p.add_argument('id', nargs='?')
             p.add_argument('--batch')
@@ -587,6 +597,14 @@ def main(root, args, rh):
                 row['attachments'] = [str(Path(p).expanduser().resolve()) for p in args.attach]
             if args.claim:
                 row['claims'] = [str(Path(c).expanduser().resolve()) for c in args.claim]
+            if args.asked_about:
+                # Only this module's own terms, so a typo cannot quietly turn the check off and
+                # the ledger records our word for the subject, never the recipient's wording.
+                terms = sorted({t.strip().casefold() for t in args.asked_about})
+                if not set(terms) <= set(ops_mentions.vocabulary()):
+                    raise ValueError('--asked-about takes one of: '
+                                     + ', '.join(ops_mentions.vocabulary()))
+                row['asked_about'] = terms
             record(lane, row, rh)
             print(row['id'])
             return 0
