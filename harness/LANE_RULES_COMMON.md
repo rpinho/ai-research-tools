@@ -17,6 +17,14 @@ changes, revert it before investigating.
 
 **Log every run, win or not.** One line per run to this lane's `RESULTS.jsonl`:
 `log-result --ledger <lane>/RESULTS.jsonl --new yes|no --kind <kind> --what "<what changed and what came of it>" --link <path> --referee HOLDS|NONE`
+A passing verdict (HOLDS, ACCEPT, PASS) on a `--new yes` row also needs
+`--verdict "<text or file>"` answering three questions, each with the file, command, count or line
+you checked: `CONTROLS:` did an assumption override what the controls show? `CONTRADICTING:` was
+data that contradicts the conclusion dropped or ignored? `LABELS:` was a label or annotation
+trusted without checking it against the raw data? An unsupported "no" is refused, because it is
+the cheapest way to satisfy a rubric. Rows with `--referee NONE` or a failing verdict are
+unaffected. (BioBasicsBench failure modes, 11-06: these are what goes wrong, not arithmetic, and
+our own referee passed 98% of 528 claims.)
 `--new yes` only when something actually moved: a printed number beaten under the same definition
 and data, a stated open problem settled, a prediction tested on new data, or a shipped artefact
 that is better than the one before it. Reproductions, restricted variants you defined yourself and

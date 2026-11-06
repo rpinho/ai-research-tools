@@ -11,6 +11,10 @@ from pathlib import Path
 
 import pytest
 
+RUBRIC = ("CONTROLS: controls in runs/ctrl.json rule it out, 3 of 3 agree. "
+          "CONTRADICTING: none dropped; all 12 rows in data/all.csv kept. "
+          "LABELS: re-derived from raw/labels.tsv, 12 of 12 match.")
+
 ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('lr', ROOT / 'harness/tools/lane-yield/log_result.py')
 lr = importlib.util.module_from_spec(spec); spec.loader.exec_module(lr)
@@ -30,13 +34,13 @@ def run(tmp_path, *args):
 
 def test_a_rerun_cannot_be_new(tmp_path):
     rc, rows = run(tmp_path, '--new', 'yes', '--kind', 'rerun', '--what', 'reproduced C44',
-                   '--link', 'https://github.com/t/p/pull/9', '--referee', 'HOLDS')
+                   '--link', 'https://github.com/t/p/pull/9', '--referee', 'HOLDS', '--verdict', RUBRIC)
     assert rc == 2 and rows == [], 'refused, and nothing written'
 
 
 def test_new_yes_needs_evidence(tmp_path):
     rc, rows = run(tmp_path, '--new', 'yes', '--kind', 'value', '--what', 'a bound',
-                   '--link', 'mail-abc123', '--referee', 'HOLDS')
+                   '--link', 'mail-abc123', '--referee', 'HOLDS', '--verdict', RUBRIC)
     assert rc == 2 and rows == []
 
 
@@ -45,7 +49,7 @@ def test_new_yes_needs_evidence(tmp_path):
                                   'doi:10.1234/abcd'])
 def test_a_pr_or_doi_link_is_evidence(tmp_path, link):
     rc, rows = run(tmp_path, '--new', 'yes', '--kind', 'value', '--what', 'a bound',
-                   '--link', link, '--referee', 'HOLDS')
+                   '--link', link, '--referee', 'HOLDS', '--verdict', RUBRIC)
     assert rc == 0 and rows[-1]['new'] is True and rows[-1]['link'] == link
 
 
@@ -54,7 +58,7 @@ def test_a_claim_dir_must_pass_result_lint(tmp_path):
     claim.mkdir(parents=True)
     (claim / 'CLAIM.md').write_text(NEW_CLAIM)
     rc, rows = run(tmp_path, '--new', 'yes', '--kind', 'value', '--what', 'a bound',
-                   '--link', str(claim), '--referee', 'HOLDS')
+                   '--link', str(claim), '--referee', 'HOLDS', '--verdict', RUBRIC)
     assert rc == 0, 'a clean claim dir is evidence'
     assert rows[-1]['new'] is True
 
@@ -65,7 +69,7 @@ def test_a_claim_dir_that_fails_result_lint_is_refused(tmp_path):
     # No "NEW: yes" first line, no Printed/Ours: exactly what result-lint exists to catch.
     (bad / 'CLAIM.md').write_text('We think this is probably better.\n')
     rc, rows = run(tmp_path, '--new', 'yes', '--kind', 'value', '--what', 'a bound',
-                   '--link', str(bad), '--referee', 'HOLDS')
+                   '--link', str(bad), '--referee', 'HOLDS', '--verdict', RUBRIC)
     assert rc == 2 and rows == []
 
 

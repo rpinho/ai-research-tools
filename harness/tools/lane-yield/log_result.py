@@ -18,6 +18,11 @@ sys.path.insert(0, str(LINT))
 sys.path.insert(0, str(LINT.parent / 'sbs'))
 
 KINDS = ('rerun', 'value', 'question', 'conjecture', 'note', 'other')
+sys.path.insert(0, str(HERE.parents[2]))
+try:
+    import verdict_rubric
+except ImportError:                  # installed layouts that do not ship the harness package
+    verdict_rubric = None
 URL = re.compile(r'(?:https?://|doi:|10\.\d{4,9}/)', re.I)
 
 
@@ -57,15 +62,36 @@ def main(argv=None):
     p.add_argument('--link', required=True, help='evidence: PR, DOI, claim dir or sent-mail id')
     p.add_argument('--referee', required=True, help='HOLDS, FAILS or NONE')
     p.add_argument('--utc', help='ISO time of the result (default now)')
+    p.add_argument('--verdict', help='the referee verdict text, or a file holding it; a passing '
+                                     'verdict on a new result must answer the three rubric questions')
     a = p.parse_args(argv)
     if a.new == 'yes':
         errors = new_errors(a.kind, a.link)
+        # 11-06, BioBasicsBench failure modes: a referee pass only counts when the verdict says
+        # what it checked. Scoped to --new yes AND a passing verdict, which is the row that leads
+        # to something being sent; NONE and FAILS rows are untouched, so no lane's ordinary
+        # logging changes.
+        if verdict_rubric is not None and verdict_rubric.passing(a.referee):
+            text = a.verdict or ''
+            if text:
+                candidate = Path(text).expanduser()
+                try:
+                    if candidate.is_file():
+                        text = candidate.read_text(errors='replace')
+                except OSError:
+                    pass
+            errors += verdict_rubric.findings(text or a.referee, a.referee)[0]
+            if errors and not a.verdict:
+                errors.append('pass the verdict with --verdict "<text>" or --verdict <file>. '
+                              'The block to fill in:\n' + verdict_rubric.template())
         if errors:
             for e in errors:
                 print('REFUSED: ' + e, file=sys.stderr)
             return 2
     row = dict(utc=a.utc or datetime.now(timezone.utc).isoformat(timespec='seconds'), new=a.new == 'yes',
                kind=a.kind, what=a.what, link=a.link, referee=a.referee)
+    if a.verdict:
+        row['verdict'] = a.verdict
     path = Path(a.ledger).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, 'a') as f:

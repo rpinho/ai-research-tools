@@ -10,6 +10,12 @@ Run only within the permitted root and compute budget. Use bounded workers, chec
 
 Do not publish, push, post, upload or contact anyone without task authorization. Outreach requires draft review, lint and exact-byte approval. Data-use restrictions and source licenses apply even to public downloads. Never include secrets, personal state or private challenge data in publishable artifacts.
 
+Whenever you referee or review a result, yours or anyone's, answer these three in the verdict, each with the file, command, count or line you checked. An unsupported "no" fails the check.
+
+- `CONTROLS:` did an assumption override what the controls show?
+- `CONTRADICTING:` was data that contradicts the conclusion dropped or ignored?
+- `LABELS:` was a label or annotation trusted without checking it against the raw data?
+
 Deliver `REPORT.md` with the result and verification status, reproduction commands, sources, limitations and next steps. Keep results small enough to review. Move superseded user files to reversible storage rather than destroying them.
 
 These rules are job instructions. The harness enforces selected receipt, resource and workflow contracts; it does not provide OS isolation, authenticate scientific claims or authorize publication. See the docs for the boundary of each check.
