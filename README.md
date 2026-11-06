@@ -1,162 +1,120 @@
 # rstack
 
-**The stack I run AI research agents on, in one repository.** Three parts, until today three
-separate repositories:
+**The stack I run AI research agents on: the map, the principles, and the machinery, in one place.**
 
-- **[`harness/`](harness/)** — bounded agents on open research problems. What it gives you: a way to
-  fix the test and the pass mark before the first result, to keep the final scoring away from the
-  agent doing the searching, to make reviewers answer a set list of questions with evidence instead
-  of just approving, a scheduled check that stops a line of work spending time without finding
-  anything, and a rule that a published result must be reproduced by a command before it counts as a
-  baseline. Several of these are opt-in, and the isolation they describe is yours to supply rather
-  than the harness's to create: [Limits](#limits) says which. Start at [AGENTS.md](AGENTS.md).
-- **[`kb/`](kb/)** — a file-based knowledge base an agent maintains over years. Each session works
-  in its own copy of the repository and merges when it is done, so two agents never fight over the
-  same file. The memory is the filesystem, not a context window.
-- **[`SKILL.md`](SKILL.md)** — the map. Which layer owns a problem, the principles each layer
-  enforces, and two scripts that fail when a rule has nothing enforcing it.
+Agents that do real work accumulate machinery. Guards, schedulers, linters, memory, publishing
+steps. The failure mode is not ignorance; it is changing the wrong part of the
+system: adding a note when what was needed was an automatic check, editing an installed copy when
+the source is a repository, writing a rule in prose when the same sentence could be a program that
+refuses. rstack says which layer is responsible for a problem, and keeps an honest account of which
+rules have something enforcing them and which are still only prose.
 
-What it has produced is below, with the numbers and the links. The short version: six bounds merged
-into a public table of mathematical constants, six linear codes submitted to the tables of best
-known codes, four exoplanet candidate reports under journal review and corrected after a re-audit,
-and a set of negative results that were more useful than any of them.
+It has produced real results, and the short list is near the bottom.
 
 Named after, and owed to, **pstack**, which is where the idea of a single stack-wide entry point
 came from.
 
----
+## The layers, and what lives here
 
-I run AI agents on open research problems and then check their work. The harness is the part that
-does the checking: it runs the agents, records what they did, and checks the results.
+| Layer | What it owns |
+|---|---|
+| Orchestration | one conductor, many workers; a wake is a deliberate decision, not a side effect |
+| Guards | a guard refuses rather than crashes, and ships with the test that proves it |
+| Outbound communication | linted before it leaves, approved as the exact bytes that will be sent |
+| The work itself | frozen tests, independent scoring, a yield check, baselines you can run |
+| Publishing and egress | nothing leaves unscanned; an agent whose output leaves has an empty identity |
+| Memory | a worktree per session, then land; one fact per file, with an index |
+| Scheduled jobs | wait on an event instead of polling; heavy compute goes elsewhere |
+| Session mechanics | context limits and written handoffs instead of silent compaction |
 
-Six bounds the agents found are merged into Terence Tao's public table of constants defined by mathematical extremal problems, six new linear codes went to the maintainer of the codetables.de tables of best known codes on 6 November, and four reports on exoplanet candidates from NASA TESS data are under review at a journal. I had to correct all four of those reports: a re-audit found errors, and some of the signals had already been reported publicly by other people. The most useful results were the negative ones. Two protein design challenges turned on the confidence scores that protein structure prediction models report, and in each the score failed differently. In one it varied between repeat predictions of the same design about as much as it varied between different designs. In the other the designs had to bind a mutant protein, and the score could not tell that target from the unmutated one. In a cell biology challenge a local score ranked two candidates in the opposite order to the official scorer.
+Three parts of that live in this repository. Until recently they were three repositories.
 
-Nothing here has been refereed by a human expert unless it says so. The section below gives the numbers, the links and what went wrong.
+- **[`harness/`](harness/README.md)**: bounded agents on open research problems. It lets you fix
+  the test and the pass mark before the first result, keep final scoring away from the agent doing the searching,
+  make reviewers answer a set list of questions with evidence, stop a line of work that spends
+  without finding anything, and require a published result to be reproduced by a command before it
+  counts as a baseline. Several checks are opt-in and the isolation is yours to supply, not the
+  harness's to create; [its Limits section](harness/README.md#limits) says which.
+- **[`kb/`](kb/README.md)**: a file-based knowledge base an agent maintains over years. Each session
+  works in its own copy of the repository and merges when it is done, so two agents never fight over
+  the same file. The memory is the filesystem, not a context window.
+- **[`SKILL.md`](SKILL.md)** and **[`rstack/`](rstack/)**: the map itself. The layer manifest, the
+  principles, and two scripts: `inventory.py` lists what exists, and `coverage.py` checks the map
+  and the enforcement claims in it.
 
-## What it has produced (as of 2026-11-06)
+## Using it
 
-All of it unrefereed unless stated. Reviews were by other models; the only outside checks are replays and checks by other GitHub users, linked from [math-certificates](https://github.com/rpinho/math-certificates). No human expert has refereed any of it. These are agent runs under this harness, directed by one person.
-
-**Mathematics.** Six bounds from this work are merged into Terence Tao's [optimization-constants table](https://github.com/teorth/optimizationproblems), Our bound for the Schur–Siegel–Smyth trace constant, C86 ≤ 1.8117251 ([PR #227](https://github.com/teorth/optimizationproblems/pull/227)), improved the previous bound of 1.8216 by Orloski and Talebizadeh Sardari; Koshta's 1.8084990 has since passed ours on the table. Our bound for the Zhang–Zagier height, C82 < 0.2534449 ([PR #229](https://github.com/teorth/optimizationproblems/pull/229)), builds on Doche and on Épi/BakeLab's 0.25357. Sixteen more pull requests are open, several of them improving the merged values, and one (#300) only records other people's bounds: [the list](https://github.com/teorth/optimizationproblems/pulls?q=is%3Apr+author%3Arpinho). The newest is a candidate upper bound C82 < 0.2519923410 ([PR #330](https://github.com/teorth/optimizationproblems/pull/330)), which an AI referee judged to hold, with caveats; Arhan Canli has independently replayed all four versions of that pull request with his own code. Certificates and checkers are indexed at [math-certificates](https://github.com/rpinho/math-certificates). The search agent never grades its own certificate: a separate exact checker does, and deliberately corrupted certificates have to be rejected (4 for C86, 18 for C68). Public postings on Hexagon: C86 [2610.00425](https://hexagonmath.org/2610.00425), C82 [2610.00426](https://hexagonmath.org/2610.00426), Korenblum's c2 ≥ 0.432 [2610.00399](https://hexagonmath.org/2610.00399), and C44, C86 and C68 at [2610.00694](https://hexagonmath.org/2610.00694), [2610.00695](https://hexagonmath.org/2610.00695) and [2610.00696](https://hexagonmath.org/2610.00696).
-
-**Coding theory.** On 6 November 2026 we sent six linear codes to Markus Grassl, who maintains the [codetables.de](https://www.codetables.de/) tables of best known codes. Each has a minimum distance one above the current lower bound for its length, dimension and field. Writing [n,k,d] for length n, dimension k and minimum distance d, they are [74,12,43], [128,14,79], [129,14,80], [130,14,81] and [130,16,77] over the five-element field GF(5), and [99,12,67] over GF(9). The [129,14,80] code is a puncturing of the [130,14,81] code. They come from Constructions X and XX applied to cyclic codes. Each code's rank and minimum distance were checked exactly by a second AI model (GPT-6 Astra) using a checker it wrote without reading the search code. It used full enumeration for the first two and a provably complete information-set search for the other four. The codes are submitted but not yet accepted, and the tables do not list them. No earlier report was found, but that search cannot prove absence.
-
-**Exoplanets.** Four reports based on NASA TESS data are under review at Research Notes of the American Astronomical Society (RNAAS). Three concern a single candidate each: TOI-6000 c (1.15 R⊕, 4.21 d), a third candidate at TOI-4342 (18.9 d, first publicly reported by Eumemic), and TIC 144439305 (1.2 R⊕, 0.94 d). The fourth covers four signals: one at TOI-4405, one at TIC 101653309 and two at TIC 262843927. TOI-6000 c was also in Eumemic's public table first, and Kunimoto et al. (2025) had already published the 14.52-day TIC 262843927 signal; the corrections credit both. Pipeline: [planet-hunt](https://github.com/rpinho/planet-hunt). All four were corrected after the numbers were re-audited, and the corrected versions are published on Zenodo: TOI-6000 c ([10.5281/zenodo.23895484](https://doi.org/10.5281/zenodo.23895484)), the TOI-4342 candidate ([10.5281/zenodo.23824790](https://doi.org/10.5281/zenodo.23824790)), TIC 144439305 ([10.5281/zenodo.23836131](https://doi.org/10.5281/zenodo.23836131)) and the three-target note ([10.5281/zenodo.23895440](https://doi.org/10.5281/zenodo.23895440)). RNAAS has made no editorial decision on any of the four reports, so all four remain unrefereed and under review. The pipeline's own [retro](https://github.com/rpinho/planet-hunt/blob/main/RETRO.md) says what changed and why. The lesson from this work: cross-match the ExoFOP TOI and CTOI tables and the public community lists before calling anything new, and test the pipeline by injecting simulated transits and measuring how often it recovers them.
-
-**Arc Virtual Cell Challenge 2026.** [virtual-cell-challenge](https://github.com/rpinho/virtual-cell-challenge): best official validation score 0.1644, rank about 463 of about 1,580 (2026-10-21). The final entry went in on 2026-10-23 and stood as the final when submissions closed on 2026-11-05; its score is pending. The useful result is a negative one. A local proxy score ranked two candidates in the opposite order to the official scorer, so the official metric is the only judge. A split-half noise ceiling (method credited to @zymobyte012) puts two halves of the real data at cosine 0.65 while the predictions reach 0.08, about 12% of that half-split agreement and about 10% of the estimated full-data ceiling.
-
-**Virtual Embryo.** [ve-community](https://github.com/rpinho/ve-community): the reusable parts of the Virtual Embryo work, released publicly on synthetic data with 102 tests. It has a checker that flags public mouse-atlas samples whose embryo ages fall outside the stage windows the challenge allows for outside data, and a tutorial on picking which of many candidate models to submit without fooling yourself with a lucky validation score. Challenge results stay unpublished under the competition's terms, so no score is claimed here.
-
-**Adaptyv protein design.** [adaptyv-challenges](https://github.com/rpinho/adaptyv-challenges): in challenge 4 (TfR1 binder), 342 designs were scored with AlphaFold2-multimer, five models each, against the TfR1 homodimer construct. The predicted confidence in the protein interface (the iPTM score) varied across the five predictions of one design about as much as it varied between different designs, so designs were filtered for agreement across all five rather than ranked by peak iPTM. In challenge 5 the designs had to bind a fragment of the mutant KRAS G12D protein presented by an MHC molecule at the cell surface, and neither AlphaFold2-multimer nor Boltz-2 confidence could separate that target from the unmutated one.
-
-## What this is
-
-A **lane** is one research problem with its own queue, rules, schedule and results. Lane state stays local. This repository contains code, synthetic examples and a dated snapshot of model rankings and routing choices.
-
-Tools for running AI agents on open research problems and competitions with checks against overfitting, stalled work and unapproved outreach. The research harness records ideas and evidence, checks lane rules, watches delivery cadence, and manages bounded workers. The [model leaderboard](LEADERBOARD.md) is one input to model routing.
-
-Agents: start with [AGENTS.md](AGENTS.md), the single source of agent instructions. Agents run the field's standard method before their own, and every claim starts with NEW: yes or NEW: no. See [normal first](docs/normal-first.md).
-
-## Quickstart
-
-Start in a clone or extracted copy of this repository. Python 3.9 or later runs
-the harness using the standard library; the selection gate also needs NumPy.
-Run the idempotent bootstrap to create a virtual environment and install dependencies.
-The paid worker example needs zsh and an authenticated executor CLI on PATH.
-The toy preview uses neither an executor nor the network.
+Point a coding agent at [`SKILL.md`](SKILL.md); that is the entry point and it explains how to route
+a task to a layer. Then build a map of your own setup. The manifest shipped here is an example with
+invented data, because a real manifest names your jobs, your notes and your rules, which is not a
+list anyone should publish.
 
 ```sh
-scripts/bootstrap.sh
-. .venv/bin/activate
-python3 examples/toy_demo.py --root .runtime/toy
-python3 harness/rh.py --root .runtime/toy ideas list toy
-python3 harness/rh.py --root .runtime/toy sweep toy --dry-run
-python3 -m pytest -q
+python3 rstack/coverage.py  --config rstack/layers.example.json   # see it work on the example
+cp rstack/layers.example.json layers.json                         # then edit `sources` and `layers`
+python3 rstack/inventory.py --config layers.json                  # what exists, names only
+python3 rstack/coverage.py  --config layers.json                  # mapped? enforced? FAILs if not
+python3 rstack/coverage.py  --config layers.json --top 10          # the prose-to-checks queue
 ```
 
-For a user-owned problem, follow [new-lane](.claude/skills/new-lane/SKILL.md). `rh --root .runtime lane new NAME --help` lists the facts you have to supply, and the same command without `--help` creates the frozen v2 declarations; then lint and preview using the commands in [AGENTS.md](AGENTS.md). New lanes keep real workers disabled and have at most 24 hours of setup lint grace; no external reading or results are claimed.
+As shipped, `coverage.py` exits 1 with exactly one failure: an example guard that no rule claims.
+That failure is the tool doing its job on the example configuration. It also
+refuses a catch-all rule, a rule that matches nothing, and a rule pointing at an enforcer that does
+not exist, because each of those is how a map starts lying.
 
-The demo creates an invented integer-sequence lane and previews search, read and kill-test instructions. Choose a fresh root on subsequent runs. A real sweep without `--dry-run` starts configured workers and can use remote sources. Do not enable workers until you have supplied your own access controls and lane policy.
+`inventory.py` reads disk and has no opinions. `coverage.py` has all of them. Keeping those apart is
+deliberate: a map written by the same pass that grades it cannot be checked.
 
-To recover the dated model routes into a local file:
+## The principles
 
-```sh
-export RH_ROLES_FILE="$PWD/.runtime/roles.json"
-python3 leaderboard/model-roles.py bootstrap --output "$RH_ROLES_FILE"
-```
+One file each in [`rstack/principles/`](rstack/principles/), with the evidence behind it and the
+mechanism that enforces it, or an admission that there isn't one.
 
-See [configuration](docs/configuration.md) before connecting an executor, remote pod, contact file or notification command.
+- [**Results, not activity**](rstack/principles/results-not-activity.md): every easy check measures
+  activity instead. One line of work ran 38 workers for two days, wrote 528 claims, had its reviewer pass
+  98% of them, and produced nothing worth sending, with every check green.
+- [**The producer never grades itself**](rstack/principles/the-producer-never-grades-itself.md): a
+  search that can see the scorer optimises the scorer.
+- [**Prior art first, and run it**](rstack/principles/prior-art-first.md): reproduce the published
+  number with a command; do not quote it. Three of four candidate reports from one lane had already
+  been published by other people.
+- [**Every deletion is reversible**](rstack/principles/reversible-deletes.md): trash, not delete;
+  verify a copy exists before removing anything you did not just create.
+- [**Architecture, not prose**](rstack/principles/architecture-not-prose.md): when a rule is broken
+  twice, build a mechanism, not a firmer sentence.
+- [**Short asks to the human**](rstack/principles/short-asks.md): a question they can answer, where
+  they actually read.
+- [**The goal must not become process**](rstack/principles/goal-not-process.md): gates counted as
+  progress. The word cap meant to prevent this got it wrong twice in one day.
+- [**Build a guard only after a real failure that cost something**](rstack/principles/guards-need-a-real-failure.md)
+ : not a hole someone could imagine using. This one names its own incident: a patch of mine that
+  answered two things which had never happened.
+- [**A guard must refuse, not crash**](rstack/principles/a-guard-must-refuse-not-crash.md): most
+  hook systems block only on a specific exit code, so a guard that raises is no guard, and it fails
+  silently. Five of twelve audited guards did exactly that.
 
-## Run one real toy worker
+The last two cost the most to learn. Read them before adding anything.
 
-Install [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) or
-[Claude Code](https://code.claude.com/docs/en/setup) separately. Each provider
-requires an account with model access. Authenticate **in the same HOME and
-environment that will run the worker**: `codex login` for Codex, or `claude auth login`
-for Claude Code. Check with `codex login status` or `claude auth status`.
-[Codex authentication](https://learn.chatgpt.com/docs/auth) also supports an API key
-piped to `codex login --with-api-key`; keep credentials outside this repository.
-For automated Claude authentication, supply your own `CLAUDE_CODE_OAUTH_TOKEN`
-(from `claude setup-token`) or `ANTHROPIC_API_KEY` through your secret manager.
-Do not copy credentials from another HOME as an installation shortcut.
+## What it has produced
 
-After the quickstart, choose either command, or run both with separate roots:
+All of it unrefereed by a human expert unless stated. [harness/README.md](harness/README.md#what-it-has-produced-as-of-2026-11-06)
+has the full account, with every number, link and correction.
 
-```sh
-AGENT_BACKEND=codex python3 examples/toy_worker.py --root .runtime/toy-codex
-AGENT_BACKEND=claude python3 examples/toy_worker.py --root .runtime/toy-claude
-```
+- **Mathematics.** Six bounds merged into Terence Tao's [public table of constants from extremal
+  problems](https://github.com/teorth/optimizationproblems), sixteen more pull requests open.
+  Certificates and independent checkers at [math-certificates](https://github.com/rpinho/math-certificates).
+- **Coding theory.** Six linear codes over GF(5) and GF(9), each one above the current lower bound,
+  sent to the [codetables.de](https://www.codetables.de/) maintainer on 6 November 2026; submitted,
+  not yet accepted.
+- **Exoplanets.** Four candidate reports from NASA TESS data under review at RNAAS, all four
+  corrected after a re-audit, corrected versions on Zenodo. Pipeline:
+  [planet-hunt](https://github.com/rpinho/planet-hunt).
+- **The negative results were the useful ones.** In two protein design challenges the structure
+  prediction models' own confidence scores could not rank designs; in a cell biology challenge a
+  local score ranked two candidates in the opposite order to the official scorer.
 
-Each command starts exactly one worker through `tools/launch.sh`, asks it to write
-an integer sequence and search/read/kill reports, and verifies the exact result.
-It writes `receipts/toy.json`, a hash-bound `receipts/selection.json`, model selection
-and outcome events in `jobs/toy-worker.log`, the provider output in
-`jobs/toy-worker.last.md`, and a finished registry record under the chosen root.
-A fresh root is mandatory. The toy uses `gpt-6.1-sol` or `claude-haiku-5-5`, low
-effort and a three-minute timeout. Claude has a $1 per-run CLI budget and no
-launcher retries; actual pricing and account access depend on the provider.
-Codex has no dollar cap in this launcher. The toy claims no statistical holdout.
+## License
 
-For general jobs set `AGENT_BACKEND=codex|claude` (default `codex`) and supply
-compatible routes through `RH_ROLES_FILE`. There is no automatic backend/model
-substitution. Claude uses `acceptEdits`, preapproved file tools and an empty MCP
-configuration; it has no OS sandbox supplied by this runner. Codex uses
-`workspace-write`. Both inherit caller authentication. A clean HOME excludes
-personal context but requires its own login. If that login is unavailable, a
-fresh clone outside personal directories with an existing login is a useful
-integration test, but does not prove authentication in an empty HOME.
-
-## Enforced contracts
-
-- [Sealed selection](docs/sealed-selection.md): a [selection package](selection/README.md) computes conservative decisions and hashes artifacts; promotion freezes a test/pass line. The opt-in [v2 harness policy](harness/docs/selection.md) adds frozen declarations, trial accounting and replayed scoring evidence. The [overfitting map](docs/overfitting.md) distinguishes defaults, optional checks and missing controls.
-- [Idea intake, sweeps and kill-tests](docs/idea-intake.md): append-only idea events, source screening, required rule files, bounded workers and result receipts.
-- [Lane cadence, lint and alerts](docs/lane-cadence.md): delivery checks remain active when workers are disabled; lane-health alerts enter an agent queue.
-- [Pods and harvesting](docs/pods.md): ownership, capacity receipts, atomic claims, deadlines and verified copies before supported shutdown paths.
-- [Prior-art receipts](docs/prior-art.md): promotion requires structured source dispositions, a baseline and captured evidence.
-- [Verification levels L0–L3](docs/verification.md): scoped whole-result and finite-component claims, hashed checker or Lean receipts, and opt-in close/lint checks.
-- [Outreach](docs/outreach.md): draft, lint, approve exact bytes, then record a separate send. The harness has no send function. Lint gates a result email on an independent re-check of every claim it reports (`RECHECK_MISSING`, `RECHECK_FAILED`, `RECHECK_DROPPED`), on pod-touched evidence having been re-run after a configured host incident (`POD_EVIDENCE_STALE`), and on the two-language rule when the recipient's contact language is not English.
-- [Lane yield](docs/lane-yield.md): each lane logs every run to its own `RESULTS.jsonl` through `log-result`. `BURNING` fails a lane that spends job-hours with nothing new, `DRY_ROUNDS` a lane that logs run after run with nothing new, `RUBBER_STAMP` a referee that passes almost everything, and `UNSURFACED` a `HOLDS` claim that reached neither an audit ledger nor a message that went out. `DRY_STREAK` fails three rounds in a row that produced nothing selective, read from a per-round ledger every paid round writes; it sends the lane to a different method family rather than stopping it, and refuses to reopen a family it has closed without new evidence.
-- [One source for the installed copy](docs/harness-sync.md): `harness-sync` installs only committed `main`, reports drift as MISSING, BEHIND, EDITED, STRAY or REMOVED, and refuses to install while a harness job runs. The installed copy is never edited in place, and the rules every lane carries come from [LANE_RULES_COMMON.md](harness/LANE_RULES_COMMON.md) through `lane-rules-sync`.
-
-Three scheduled scripts enforce these rules: a lane that goes quiet gets a [resume prompt](docs/lane-nudge.md), a lane going in circles fails [lane yield](docs/lane-yield.md), and agents wake the conductor only through the [conductor inbox](docs/conductor-inbox.md).
-
-The [science rules](tools/RULES.md) are a job-spec template. They distinguish requirements enforced by code from responsibilities of the experiment owner. The [harness reference](harness/README.md) lists commands and the [migration notes](harness/MIGRATION.md) explain changes from a machine-local installation.
-
-## Limits
-
-This is a Unix-oriented local harness, using file locks and processes. Reversible disposal defaults to macOS Trash; other systems need a compatible configured command. It is not an access-control sandbox, a competition platform or an independent judge of scientific truth. Holdout declarations, reviewer identities, human approval quotes and reported results are assertions with receipts; the harness cannot prove the person, model or experiment was honest. An exact verifier and a separate selection environment remain necessary.
-
-The model snapshot reflects selected tasks and small samples. The initial ordering of models for selection reflects judgment, not measured superiority. An executor exit code is not a quality score. Model availability can change; a route entry does not prove access to a provider. See the [ranking method](leaderboard/README.md).
-
-Optional hooks must be installed in the tool environment that performs the action. The capacity hook starts in audit mode. The deadline hook only recognizes command text; it cannot prove that a remote termination command will succeed. A stopped controller, missing scheduler, unavailable provider or missing credentials can still stall work. There is no installed watchdog, cloud account configuration or notification service in this repository.
-
-## Credit and license
-
-The separation of adaptive work from final evaluation is informed by [Dwork and coauthors on holdout reuse](https://arxiv.org/abs/1506.02629) and [Blum and Hardt on reliable competition leaderboards](https://arxiv.org/abs/1502.04585). The search/evaluate/retain pattern has related work in [AlphaEvolve](https://arxiv.org/abs/2506.13131). This code implements local workflow checks, not those papers' algorithms or guarantees. [Sources and attribution](docs/credits.md) describe the relationship.
-
-[MIT license](LICENSE).
-
-## Shared lessons and field retros
-
-See [sharing lessons](docs/lessons.md) for `rh lessons`, automatic sweep/new-lane
-reads, opt-in close requirements, and the local-only `rh retro` workflow.
+[MIT](LICENSE). The design owes a debt to published work on holdout reuse and leaderboard
+reliability; [sources and attribution](docs/credits.md) describe the relationship, and
+[harness/README.md](harness/README.md#credit-and-license) credits the specific papers.

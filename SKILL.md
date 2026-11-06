@@ -12,10 +12,10 @@ could be a lint. This is how you find the right layer first.
 
 It is three parts, and one habit:
 
-- **`harness/`** — bounded agents on open research problems, with frozen tests, sealed selection,
+- **`harness/`**: bounded agents on open research problems, with frozen tests, sealed selection,
   reviewers, a yield check and a baseline you can run.
-- **`kb/`** — a file-based knowledge base an agent maintains: worktree per session, then land.
-- **this skill** — the map, the principles, and two scripts that refuse to let the map go stale.
+- **`kb/`**: a file-based knowledge base an agent maintains: worktree per session, then land.
+- **this skill**: the map, the principles, and two scripts that refuse to let the map go stale.
 
 ## Use it in four steps
 
