@@ -73,3 +73,27 @@ def test_a_plain_spec_is_counted_whole(tmp_path):
     p = tmp_path / 'spec.md'
     p.write_text(ASK)
     assert sw.count(p) == len(ASK.split())
+
+
+def test_a_generated_worklist_of_ids_is_not_process(tmp_path):
+    """friends 0-read was refused at 1,172 words, 771 of them one line of 762 queue ids.
+
+    The cap exists so the goal cannot turn into process. The list of rows to work on IS the goal,
+    so counting it refuses a lane for having a long queue, which is backwards.
+    """
+    ids = ', '.join('"%032x"' % i for i in range(300))
+    spec = tmp_path / 'read.md'
+    spec.write_text('Read and judge every listed queue id.\n'
+                    'Required queue ids (all unmarked rows since stage start): [%s]\n' % ids)
+    assert sw.count(spec) == 7
+
+
+def test_prose_in_brackets_cannot_buy_room(tmp_path):
+    """The exclusion must not become a way to smuggle rules past the cap."""
+    spec = tmp_path / 'read.md'
+    spec.write_text('Rules: ["always do the thing", "never do the other thing"]\n')
+    assert sw.count(spec) > 7, 'strings with spaces are prose, not ids'
+    spec.write_text('Note: [not json at all\n')
+    assert sw.count(spec) == 5
+    spec.write_text('Single: ["0123456789abcdef"]\n')
+    assert sw.count(spec) == 2, 'a one-item list is not a worklist'

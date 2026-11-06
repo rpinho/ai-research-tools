@@ -15,6 +15,14 @@ it. Blocks that the harness itself wrote into the spec are excluded:
 
   --- BEGIN VERBATIM LANE POLICY: <path> ---  ...  --- END VERBATIM LANE POLICY ---
   ## Shared lessons                           ...  up to the next heading
+  <label>: ["<id>", "<id>", ...]              a generated worklist of ids, on one line
+
+That last one, added 2026-11-06 after the first fix did not go far enough: friends' `0-read` and
+`1-read` were still refused at 1,172 and 1,199 words, and 771 of those were a single line listing
+762 queue ids for the worker to read. The cap exists so the GOAL cannot turn into process. A list
+of the rows to work on is the goal; counting it means a lane is refused for having a long queue,
+which is the opposite of what the rule wants. Only a line whose value parses as a JSON array of
+plain strings is excluded, so prose cannot hide inside the brackets to buy room.
 
 Shared material added to the *prompt* rather than the spec -- the prior-art block, GOAL.md,
 `rh lessons for LANE` -- is appended after this check runs and is never counted.
@@ -24,6 +32,7 @@ unlimited one. These markers are written by the harness's own sweep; a hand-writ
 pastes them in to buy itself room is circumventing a hard rule, which is not what this guards.
 """
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
@@ -32,6 +41,25 @@ BEGIN = re.compile(r'^---\s*BEGIN VERBATIM LANE POLICY\b.*---\s*$')
 END = re.compile(r'^---\s*END VERBATIM LANE POLICY\s*---\s*$')
 LESSONS = re.compile(r'^##\s+Shared lessons\s*$')
 HEADING = re.compile(r'^#{1,6}\s+\S')
+MANIFEST = re.compile(r'^[^:\[\]]{1,80}:\s*(\[.*\])\s*$')
+
+
+def id_manifest(line):
+    """Is this line a generated worklist, `label: ["id", "id", ...]`?
+
+    Strict on purpose: the value has to parse as a JSON array of plain strings, each short and
+    without spaces. That admits the sweep's queue-id lists and refuses a paragraph of rules
+    wrapped in brackets to dodge the cap.
+    """
+    m = MANIFEST.match(line)
+    if not m:
+        return False
+    try:
+        value = json.loads(m.group(1))
+    except ValueError:
+        return False
+    return (isinstance(value, list) and len(value) > 1
+            and all(isinstance(v, str) and 0 < len(v) <= 64 and ' ' not in v for v in value))
 
 
 def job_specific(text):
@@ -58,6 +86,8 @@ def job_specific(text):
                 in_lessons = False
             else:
                 continue
+        if id_manifest(line):
+            continue
         kept.append(line)
     return '\n'.join(kept)
 
