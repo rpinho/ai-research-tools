@@ -1,6 +1,33 @@
-# AI tools for research
+# rstack
 
-I run AI agents on open research problems and then check their work. This repository is the harness: it runs the agents, records what they did, and checks the results.
+**The stack I run AI research agents on, in one repository.** Three parts, until today three
+separate repositories:
+
+- **[`harness/`](harness/)** — bounded agents on open research problems. What it gives you: a way to
+  fix the test and the pass mark before the first result, to keep the final scoring away from the
+  agent doing the searching, to make reviewers answer a set list of questions with evidence instead
+  of just approving, a scheduled check that stops a line of work spending time without finding
+  anything, and a rule that a published result must be reproduced by a command before it counts as a
+  baseline. Several of these are opt-in, and the isolation they describe is yours to supply rather
+  than the harness's to create: [Limits](#limits) says which. Start at [AGENTS.md](AGENTS.md).
+- **[`kb/`](kb/)** — a file-based knowledge base an agent maintains over years. Each session works
+  in its own copy of the repository and merges when it is done, so two agents never fight over the
+  same file. The memory is the filesystem, not a context window.
+- **[`SKILL.md`](SKILL.md)** — the map. Which layer owns a problem, the principles each layer
+  enforces, and two scripts that fail when a rule has nothing enforcing it.
+
+What it has produced is below, with the numbers and the links. The short version: six bounds merged
+into a public table of mathematical constants, six linear codes submitted to the tables of best
+known codes, four exoplanet candidate reports under journal review and corrected after a re-audit,
+and a set of negative results that were more useful than any of them.
+
+Named after, and owed to, **pstack**, which is where the idea of a single stack-wide entry point
+came from.
+
+---
+
+I run AI agents on open research problems and then check their work. The harness is the part that
+does the checking: it runs the agents, records what they did, and checks the results.
 
 Six bounds the agents found are merged into Terence Tao's public table of constants defined by mathematical extremal problems, six new linear codes went to the maintainer of the codetables.de tables of best known codes on 6 November, and four reports on exoplanet candidates from NASA TESS data are under review at a journal. I had to correct all four of those reports: a re-audit found errors, and some of the signals had already been reported publicly by other people. The most useful results were the negative ones. Two protein design challenges turned on the confidence scores that protein structure prediction models report, and in each the score failed differently. In one it varied between repeat predictions of the same design about as much as it varied between different designs. In the other the designs had to bind a mutant protein, and the score could not tell that target from the unmutated one. In a cell biology challenge a local score ranked two candidates in the opposite order to the official scorer.
 
