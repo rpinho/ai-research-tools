@@ -13,3 +13,30 @@ python3 harness/rh.py prior-art receipt toy PRIOR_ART.md \
 That command uses the network and GitHub CLI. Configure capture storage first. Review sources, dates, competing results and competition data rules yourself. A hash proves which local bytes were referenced; it does not prove a search was complete or a novelty claim correct. No receipt overrides a lane's data restrictions.
 
 Code: [idea_policy.py](../harness/idea_policy.py), [prior_art_receipt.py](../harness/tools/prior_art_receipt.py). Tests: [test_prior_art_shared.py](../harness/tests/test_prior_art_shared.py).
+
+## A baseline you can run
+
+Finding prior art and reading it is not the same as being able to produce its number. Three
+failures here came from the gap: planets reported four candidates of which three were already in
+public community tables; c5 spent about 38 rounds in a family after the KB had named a better one;
+and a quoted baseline rots silently when a dependency changes under it.
+
+`harness/tools/baseline.py` registers a published number as a command that reproduces it:
+
+```sh
+baseline.py --lane LANE add --name NAME --source DOI --published 1.8216 \
+    --cmd "python3 reproduce.py" --metric bound --lower-is-better
+baseline.py --lane LANE run --name NAME      # the number, reproduced today
+baseline.py --lane LANE check                # every baseline; non-zero on drift
+baseline.py --lane LANE list
+```
+
+`add` refuses to record anything that does not reproduce, and that refusal is the point: a lane
+cannot write down a baseline it has not run. A result that comes out better than the published
+number still counts as reproducing the method, with `--higher-is-better` or `--lower-is-better`
+saying which direction that is. `check` is what makes it a tested tool rather than a cached
+number: when a baseline stops reproducing, the lane is told, instead of going on comparing
+against a figure nothing on the machine can still produce.
+
+Rows land in `lanes/<lane>/BASELINES.jsonl`. The number is the last one the command prints, or the
+value of `--json-key` in the last JSON line, so progress output is harmless.
