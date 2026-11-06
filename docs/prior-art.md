@@ -53,3 +53,31 @@ against a figure nothing on the machine can still produce.
 
 Rows land in `lanes/<lane>/BASELINES.jsonl`. The number is the last one the command prints, or the
 value of `--json-key` in the last JSON line, so progress output is harmless.
+
+## Public inputs a worker may not download
+
+A worker with network access is a worker that can exfiltrate and can be fed anything, so lanes
+forbid downloads. The cost showed up on 2026-11-06: the friends kill test returned BLOCKED twice
+in one day with "exact public XTW-n308 input unavailable locally; downloading is prohibited. No
+solver ran." The input is public and free, and nothing in the harness was responsible for putting
+it on disk.
+
+`harness/tools/inputs.py` splits the step that reaches the network from the step that uses the
+file, the same way the X policy does:
+
+```sh
+inputs.py --lane LANE add  --name XTW-n308 --url https://.../X-n308-k13.vrp \
+    --sha256 <expected> --source CVRPLIB      # staged once, by someone with network
+inputs.py --lane LANE path --name XTW-n308     # what a worker calls; no network, ever
+inputs.py --lane LANE check                    # re-hash everything; non-zero if any changed
+inputs.py --lane LANE list
+```
+
+`--sha256` is the pin. Without it the file is still staged and its hash recorded and printed, but
+the row is marked unpinned, because nothing verified it is the file the source published. A
+mismatch keeps nothing: the file is removed rather than left looking staged. `check` re-hashes
+against what was recorded, which is what protects a comparison made weeks apart — an input that
+changed under a lane invalidates every round that used it, silently.
+
+http(s) only, no auth, a redirect off http is refused, there is a size cap, and a name is a plain
+filename fragment so it cannot escape the lane's own `inputs/` directory.
