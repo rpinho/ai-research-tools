@@ -497,7 +497,7 @@ def send_lock(root, action):
 def arguments(sub):
     parser = sub.add_parser('outreach', help='draft, lint, approve and track outreach; never sends')
     actions = parser.add_subparsers(dest='action', required=True)
-    for action in ('draft', 'lint', 'approve', 'sent', 'reply', 'close', 'drop', 'status', 'due'):
+    for action in ('draft', 'lint', 'approve', 'sent', 'record-sent', 'reply', 'close', 'drop', 'status', 'due'):
         p = actions.add_parser(action)
         if action == 'due':
             p.add_argument('--all', action='store_true', help='include future follow-ups')
@@ -532,11 +532,17 @@ def arguments(sub):
                 p.add_argument('--quote', required=True)
         else:
             p.add_argument('id')
-            if action == 'sent':
+            if action in ('sent', 'record-sent'):
                 p.add_argument('--message-id', required=True)
                 p.add_argument('--thread-id')
                 p.add_argument('--via', required=True, choices=('api', 'browser'))
-                p.add_argument('--utc', help='when it actually went out, when that was before now')
+                if action == 'sent':
+                    p.add_argument('--utc', help='when it actually went out, when that was before now')
+                else:
+                    p.add_argument('--utc', required=True, help='when it actually went out')
+                    p.add_argument('--reason', required=True,
+                                   help='why this is being recorded after the fact, in the '
+                                        'operator\'s own words')
             elif action == 'reply':
                 p.add_argument('--summary', required=True)
             else:
@@ -662,6 +668,17 @@ def main(root, args, rh):
                         raise ValueError('X reach changed before sent: ' + '; '.join(failures))
                 if row['channel'] not in X_PUBLIC and collisions(row, list(all_rows(root, rh)), time_of(rh.now())) and not row.get('lint', {}).get('allow_collision'):
                     raise ValueError('recent contact collision; lint with --allow-collision and obtain approval again')
+            elif args.action == 'record-sent':
+                # A message that already left. Refusing to record it does not un-send it; it
+                # only puts a hole in the ledger, and on 11-05 that cost a thread its record:
+                # the reply had nothing to attach to, so the row had to be dropped. So lint
+                # runs and is kept, but it does not block. This is bookkeeping, never
+                # authorization: the row gets no `approval`, so the send hook, which matches
+                # bytes against an approved entry only, can never authorize it.
+                if row['status'] in ('sent', 'replied', 'closed'):
+                    raise ValueError('already recorded as sent')
+                if row['status'] == 'approved':
+                    raise ValueError('this draft is approved; record it with `sent`')
             elif args.action == 'reply' and row['status'] != 'sent':
                 raise ValueError('reply requires a sent message')
             elif args.action in ('close', 'drop') and row['status'] in ('closed', 'dropped'):
@@ -681,6 +698,21 @@ def main(root, args, rh):
                            follow_up_due=(sent_at + dt.timedelta(days=settings(lane, rh)['follow_up_days'])).isoformat())
                 if args.thread_id:
                     row['sent']['thread_id'] = safe(args.thread_id, 'thread id')
+            elif args.action == 'record-sent':
+                sent_at = time_of(args.utc)
+                if sent_at > time_of(rh.now()):
+                    raise ValueError('--utc is in the future')
+                result = lint_rows(lane, [row], rh)[row['id']]
+                kept = ['{}: {}'.format(check, failure)
+                        for check, failures in result['checks'].items() for failure in failures]
+                row.update(status='sent',
+                           sent=dict(utc=sent_at.isoformat(), message_id=safe(args.message_id, 'message id'), via=args.via),
+                           recorded_after_the_fact=dict(utc=rh.now(), reason=safe(args.reason, 'reason'),
+                                                        lint_ok=result['ok'], findings=kept),
+                           follow_up_due=(sent_at + dt.timedelta(days=settings(lane, rh)['follow_up_days'])).isoformat())
+                row.pop('approval', None)
+                if args.thread_id:
+                    row['sent']['thread_id'] = safe(args.thread_id, 'thread id')
             elif args.action == 'reply':
                 summary = safe(args.summary, 'reply summary')
                 if re.search(r'["“”«»]|^>|(?<!\w)\x27[^\x27\n]+\x27(?!\w)', summary):
@@ -690,4 +722,7 @@ def main(root, args, rh):
                 row.update(status='closed' if args.action == 'close' else 'dropped', reason=safe(args.reason, 'reason'))
             record(lane, row, rh)
             print('{} {}'.format(row['id'], row['status']))
+            if args.action == 'record-sent':
+                for finding in row['recorded_after_the_fact']['findings']:
+                    print('  WARN: went out before it was recorded: ' + finding)
     return 0

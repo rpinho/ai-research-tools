@@ -597,3 +597,64 @@ def test_the_ops_rule_leaves_a_public_post_alone(env):
                      to='@scientist', channel='x_post')
     rc, out, _ = cli(env[0], 'lint', 'test', ident)
     assert rc == 0 and 'ops' not in out, out
+
+
+def test_record_sent_lands_a_message_that_already_went_out_and_failed_todays_lint(env):
+    """friends, 11-05: a personal reply went out before it was registered, and lint failed the
+    already-sent text (three questions, one a rhetorical tag). approve refused, so sent refused,
+    so the row had to be dropped -- and the friend's next reply had nothing to attach to.
+    Refusing to record a message does not un-send it; it only puts a hole in the ledger.
+    """
+    root, lane = env
+    ident, _ = draft(env, 'Did it work? Why not? Right?')
+    assert cli(root, 'lint', 'test', ident)[0] == 1, 'the already-sent text fails lint'
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] != 0
+    assert cli(root, 'sent', 'test', ident, '--message-id', 'm', '--via', 'api')[0] != 0
+    earlier = '2026-11-05T22:44:00+00:00'
+    rc, out, err = cli(root, 'record-sent', 'test', ident, '--message-id', 'abc',
+                       '--thread-id', 'thr', '--via', 'api', '--utc', earlier,
+                       '--reason', 'Ricardo replied from his phone before it was registered')
+    assert rc == 0, err
+    assert 'went out before it was recorded: questions:' in out
+    row = outreach.current(lane, rh)[ident]
+    assert row['status'] == 'sent' and row['sent']['utc'] == earlier
+    assert row['sent']['message_id'] == 'abc' and row['sent']['thread_id'] == 'thr'
+    # The findings are kept rather than dropped: the postmortem needs them.
+    after = row['recorded_after_the_fact']
+    assert after['lint_ok'] is False and any('questions:' in f for f in after['findings'])
+    assert 'phone before it was registered' in after['reason']
+    # The follow-up falls due from when it really left, and a reply can now attach to it.
+    assert row['follow_up_due'] > earlier
+    assert cli(root, 'reply', 'test', ident, '--summary', 'He answered the second question')[0] == 0
+
+
+def test_a_recorded_send_is_bookkeeping_and_can_never_authorize_a_send(env):
+    """The send hook matches bytes against an approved entry. A recorded row has no approval,
+    so recording history cannot become a way around `rh outreach approve`.
+    """
+    root, lane = env
+    ident, path = draft(env, 'Did it work? Why not? Right?')
+    assert cli(root, 'record-sent', 'test', ident, '--message-id', 'abc', '--via', 'api',
+               '--utc', '2026-11-05T22:44:00+00:00', '--reason', 'Sent from his phone')[0] == 0
+    row = outreach.current(lane, rh)[ident]
+    assert 'approval' not in row
+    gate = Path(__file__).resolve().parents[2] / 'tools/email-voice-gate.py'
+    spec = importlib.util.spec_from_file_location('gate_under_test', gate)
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    assert not hook.approved_body({'body': path.read_text()}, root), 'recorded is not approved'
+    # And it cannot be walked back into the sendable states either.
+    assert cli(root, 'approve', 'test', ident, '--quote', 'Send it')[0] != 0
+    assert cli(root, 'record-sent', 'test', ident, '--message-id', 'z', '--via', 'api',
+               '--utc', '2026-11-05T22:44:00+00:00', '--reason', 'again')[0] != 0
+
+
+def test_record_sent_refuses_a_future_time_and_an_approved_draft(env):
+    root, _ = env
+    ident, _ = draft(env, 'Did it work? Why not? Right?')
+    assert cli(root, 'record-sent', 'test', ident, '--message-id', 'm', '--via', 'api',
+               '--utc', '2099-01-01T00:00:00+00:00', '--reason', 'r')[0] != 0
+    approved, _ = approve(env)
+    rc, _, err = cli(root, 'record-sent', 'test', approved, '--message-id', 'm', '--via', 'api',
+                     '--utc', '2026-11-05T22:44:00+00:00', '--reason', 'r')
+    assert rc != 0 and 'record it with `sent`' in err

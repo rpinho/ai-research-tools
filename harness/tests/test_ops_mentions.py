@@ -87,3 +87,21 @@ def test_the_vocabulary_is_what_asked_about_accepts():
     assert ops_mentions.vocabulary() == sorted(ops_mentions.vocabulary())
     # An unknown term changes nothing, so a typo cannot quietly turn the check off.
     assert fails('We moved it off RunPod.', ['runpodd']) == ['runpod']
+
+
+def test_terms_names_what_a_text_carries_without_parsing_messages():
+    """The friends lane runs this over an incoming message and feeds the names to asked_about,
+    so it never has to parse a failure string to learn what the friend raised.
+    """
+    assert ops_mentions.terms('What did the RunPod security incident mean?') == {
+        'runpod', 'security-incident'}
+    assert ops_mentions.terms('Each seed pod holds four to six ovules.') == set()
+    assert ops_mentions.terms('') == set()
+    assert ops_mentions.terms('I rented a pod for it.') == {'pod'}
+    # What terms() finds is exactly what findings() reports, and every name is in the vocabulary.
+    question = 'Que quer dizer um aviso de seguranca no servidor RunPod?'
+    found = ops_mentions.terms(question)
+    assert found <= set(ops_mentions.vocabulary())
+    assert set(fails(question)) == found
+    # Feeding an incoming message's terms back in is how a reply gets to answer it.
+    assert ops_mentions.findings(question, found)[0] == []

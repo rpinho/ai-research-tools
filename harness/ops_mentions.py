@@ -91,6 +91,20 @@ def sentences(text):
     return [s for s in (m.group().strip() for m in SENTENCE.finditer(text)) if s]
 
 
+def terms(text):
+    """The names of the ops terms this text carries, as a set.
+
+    The names, not messages: a caller deciding what to do about them should not have to parse
+    `findings()`'s wording. The friends lane runs this over an incoming message and passes
+    what it finds as `asked_about`, which is how a reply that answers a friend's question
+    about our setup gets to say the word.
+    """
+    found = {name for name, matcher in MATCHERS.items() if matcher.search(text)}
+    blocks = sentences(text)
+    return found | {name for name, (term, company) in PAIRS.items()
+                    if any(term.search(s) and company.search(s) for s in blocks)}
+
+
 def findings(text, asked_about=()):
     """Return (failures, warnings) for the no-ops rule.
 
@@ -99,10 +113,7 @@ def findings(text, asked_about=()):
     ever reported, never the surrounding text: a lint result is written to the lane ledger and
     the draft body stays a private file.
     """
-    found = {name for name, matcher in MATCHERS.items() if matcher.search(text)}
-    blocks = sentences(text)
-    found |= {name for name, (term, company) in PAIRS.items()
-              if any(term.search(s) and company.search(s) for s in blocks)}
+    found = terms(text)
     failures, warnings = [], []
     asked = {str(a).strip().casefold() for a in asked_about or ()}
     for name in sorted(found):
