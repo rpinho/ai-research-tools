@@ -107,3 +107,88 @@ def test_dry_rounds_fail_when_a_lane_repeats_an_approach_with_no_win(tmp_path):
     assert ly.check_lane('c5', cfg, now)['status'] == 'PASS'
     # off by default: a lane that never set the cap is not failed by attempts alone
     assert ly.check_lane('c5', {'logs': [], 'results': [str(ledger)]}, now)['status'] == 'PASS'
+
+
+def outreach(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'a') as f:
+        for row in rows:
+            f.write(json.dumps(row) + '\n')
+
+
+def test_a_claim_that_was_emailed_is_surfaced_without_a_hand_written_csv_row(tmp_path):
+    """friends, 11-05: three HOLDS claims were flagged as never audited while all three had
+    been emailed. `rh outreach draft --claim DIR` already records which claims reached
+    someone, so the check was asking for the same fact twice and the only way to clear it was
+    to hand-write CSV rows for messages the ledger had recorded. A message that went out
+    surfaces its claims; a draft or a dropped draft does not.
+    """
+    now = time.time()
+    for name in ('alpha_A1', 'beta_B1', 'gamma_C1'):
+        claim(tmp_path / 'claims' / name, True, 'HOLDS', now - 60)
+    ledger = tmp_path / 'lanes/f/OUTREACH.jsonl'
+    outreach(ledger, [
+        # Sent: alpha_A1 reached someone, so it is surfaced.
+        dict(id='s1', status='sent', claims=[str(tmp_path / 'claims/alpha_A1')],
+             sent=dict(utc='2026-11-05T20:00:00+00:00', message_id='m1', via='api')),
+        # Only drafted, and only dropped: neither went out.
+        dict(id='d1', status='drafted', claims=[str(tmp_path / 'claims/beta_B1')]),
+        dict(id='x1', status='dropped', claims=[str(tmp_path / 'claims/gamma_C1')],
+             reason='superseded'),
+    ])
+    cfg = dict(logs=[], claims=[str(tmp_path / 'claims/*')], hold=str(tmp_path / 'HOLD'),
+               surface_audit=dict(claims=[str(tmp_path / 'claims/*')],
+                                  csv=[str(tmp_path / 'surface_*/surface*.csv')],
+                                  outreach=[str(ledger)]))
+    r = ly.check_lane('f', cfg, now)
+    assert r['status'] == 'FAIL' and r['fails'] == [
+        'UNSURFACED: 2 HOLDS claims of 2 subjects never audited (beta 1, gamma 1)']
+    # A later send clears the drafted one; the CSV still clears the other, as the second route.
+    outreach(ledger, [dict(id='d1', status='sent', claims=[str(tmp_path / 'claims/beta_B1')],
+                           sent=dict(utc='2026-11-06T09:00:00+00:00', message_id='m2', via='api'))])
+    (tmp_path / 'surface_a').mkdir()
+    (tmp_path / 'surface_a/surface.csv').write_text('id,subject,new\ngamma_C1,gamma,no\n')
+    assert ly.check_lane('f', cfg, now)['status'] == 'PASS'
+
+
+def test_a_message_recorded_after_the_fact_still_surfaces_its_claims(tmp_path):
+    """`rh outreach record-sent` carries no approval and may carry lint findings, but the
+    message did leave, so its claims are surfaced. A `closed` row with no send is not.
+    """
+    now = time.time()
+    claim(tmp_path / 'claims/alpha_A1', True, 'HOLDS', now - 60)
+    claim(tmp_path / 'claims/beta_B1', True, 'HOLDS', now - 60)
+    ledger = tmp_path / 'lanes/f/OUTREACH.jsonl'
+    outreach(ledger, [
+        dict(id='r1', status='sent', claims=[str(tmp_path / 'claims/alpha_A1')],
+             sent=dict(utc='2026-11-05T22:44:00+00:00', message_id='m1', via='api'),
+             recorded_after_the_fact=dict(reason='sent from his phone', lint_ok=False,
+                                          findings=['questions: at most 1 question(s); found 3'])),
+        # Closed without ever being sent: a draft that was abandoned, not a message.
+        dict(id='c1', status='closed', claims=[str(tmp_path / 'claims/beta_B1')], reason='stale'),
+    ])
+    cfg = dict(logs=[], claims=[str(tmp_path / 'claims/*')], hold=str(tmp_path / 'HOLD'),
+               surface_audit=dict(claims=[str(tmp_path / 'claims/*')], outreach=[str(ledger)]))
+    assert ly.check_lane('f', cfg, now)['fails'] == [
+        'UNSURFACED: 1 HOLDS claims of 1 subjects never audited (beta 1)']
+
+
+def test_the_outreach_route_is_optional_and_a_corrupt_line_does_not_blind_it(tmp_path):
+    now = time.time()
+    claim(tmp_path / 'claims/alpha_A1', True, 'HOLDS', now - 60)
+    ledger = tmp_path / 'lanes/f/OUTREACH.jsonl'
+    ledger.parent.mkdir(parents=True)
+    ledger.write_text('{"not json\n\n' + json.dumps(
+        dict(id='s1', status='sent', claims=[str(tmp_path / 'claims/alpha_A1')],
+             sent=dict(utc='2026-11-05T20:00:00+00:00', message_id='m', via='api'))) + '\n')
+    base = dict(logs=[], claims=[str(tmp_path / 'claims/*')], hold=str(tmp_path / 'HOLD'))
+    # A lane that configures no outreach globs is unaffected: the claim is still unsurfaced.
+    assert ly.check_lane('f', dict(base, surface_audit=dict(
+        claims=[str(tmp_path / 'claims/*')])), now)['status'] == 'FAIL'
+    # A missing file is not an error either.
+    assert ly.check_lane('f', dict(base, surface_audit=dict(
+        claims=[str(tmp_path / 'claims/*')], outreach=[str(tmp_path / 'nope/*.jsonl')])),
+        now)['status'] == 'FAIL'
+    # And the good line after the corrupt one is still read.
+    assert ly.check_lane('f', dict(base, surface_audit=dict(
+        claims=[str(tmp_path / 'claims/*')], outreach=[str(ledger)])), now)['status'] == 'PASS'

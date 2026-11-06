@@ -18,11 +18,15 @@ and FAILS the lane when
                  of the same approach with nothing to show; set max_attempts_without_new to enable)
   RUBBER_STAMP   verdicts >= min_verdicts and pass share >= max_pass_share (a referee that passes everything
                  is not refereeing)
-  UNSURFACED     (lanes with `surface_audit`) a claim with a HOLDS verdict, at any time, whose id is in no
-                 audit CSV. Why (2026-11-05): an audit ran against a hand-picked subject list, so the great
+  UNSURFACED     (lanes with `surface_audit`) a claim with a HOLDS verdict, at any time, that nobody
+                 surfaced: its id is in no audit CSV and it is on no outreach record that went out.
+                 Why (2026-11-05): an audit ran against a hand-picked subject list, so the great
                  majority of HOLDS claims were never audited at all. Coverage is every claim dir, so a new
-                 subject can't be skipped. This failure pushes general but never writes the hold file:
-                 missing paperwork is not spending in circles.
+                 subject can't be skipped. The outreach route was added 11-06 because the check was asking
+                 for the same fact twice: `rh outreach draft --claim DIR` already records which claims
+                 reached someone, and three emailed claims were being flagged as never audited. The CSV
+                 stays the other route, for a claim surfaced without a message. This failure pushes
+                 general but never writes the hold file: missing paperwork is not spending in circles.
 Every research lane is configured, not only one: the point of a lane is something new.
 A lane with `report_only: true` is pushed to general on FAIL but gets no hold file.
 With --act, a failing lane gets its hold file written (its loops stop spending) and a push to general.
@@ -79,9 +83,44 @@ def verdict_head(d):
         return None
 
 
+def surfaced_by_outreach(globs):
+    """Claim dirs named by an outreach record that actually went out.
+
+    `rh outreach draft --claim DIR` is what puts a claim dir on a message, so the outreach
+    ledger already knows which claims reached someone. Reading it here is what stops this
+    check from asking for the same fact twice (friends, 11-05: three claims were flagged as
+    never audited while all three had been emailed, and clearing it meant hand-writing CSV
+    rows for messages the ledger had already recorded).
+
+    The signal is the record's own `sent` stamp, not its status string: a row can be closed or
+    dropped without ever having been sent, and a row recorded after the fact with
+    `rh outreach record-sent` did go out. A bad line is skipped rather than blinding the file.
+    """
+    sent = set()
+    for g in globs or []:
+        for p in glob.glob(os.path.expanduser(g)):
+            try:
+                lines = open(p, errors='replace').read().splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(r, dict) or not (r.get('sent') or {}).get('utc'):
+                    continue
+                for claim in r.get('claims') or []:
+                    sent.add(Path(str(claim)).name)
+    return sent
+
+
 def unsurfaced(audit):
-    """HOLDS claims whose id appears in no audit CSV (first column `id`). audit = {claims: [globs], csv: [globs]}."""
-    seen = set()
+    """HOLDS claims nobody surfaced: in no audit CSV (first column `id`) and on no message that
+    went out. audit = {claims: [globs], csv: [globs], outreach: [globs]}."""
+    seen = surfaced_by_outreach(audit.get('outreach', []))
     for g in audit.get('csv', []):
         for p in glob.glob(os.path.expanduser(g)):
             try:
@@ -148,7 +187,9 @@ def check_lane(name, cfg, now):
     missing = unsurfaced(c['surface_audit']) if c.get('surface_audit') else {}
     if missing:
         n = sum(len(v) for v in missing.values())
-        per = ', '.join(f'{k} {len(v)}' for k, v in sorted(missing.items(), key=lambda kv: -len(kv[1])))
+        # Name breaks a tie on count: glob order is not stable, and a message that reorders
+        # itself between runs reads as a new failure each time it is pushed to general.
+        per = ', '.join(f'{k} {len(v)}' for k, v in sorted(missing.items(), key=lambda kv: (-len(kv[1]), kv[0])))
         fails.append(f'UNSURFACED: {n} HOLDS claims of {len(missing)} subjects never audited ({per})')
     return dict(lane=name, as_of=datetime.fromtimestamp(now).isoformat(timespec='minutes'), job_hours=round(hours, 1),
                 attempts=attempts, new_yes=new_yes, verdicts=verdicts, pass_share=round(share, 3), status='FAIL' if fails else 'PASS', fails=fails)
