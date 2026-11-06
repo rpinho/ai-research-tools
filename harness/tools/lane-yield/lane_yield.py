@@ -19,10 +19,10 @@ and FAILS the lane when
   RUBBER_STAMP   verdicts >= min_verdicts and pass share >= max_pass_share (a referee that passes everything
                  is not refereeing)
   UNSURFACED     (lanes with `surface_audit`) a claim with a HOLDS verdict, at any time, whose id is in no
-                 audit CSV. Why (2026-11-05): the 11-04 strict audit took a hand-picked list of 7 friends, and
-                 147 HOLDS claims of 19 other friends (alpha included, who Ricardo then wanted to write to) were
-                 never audited. Coverage is every claim dir, so a new friend can't be skipped. This failure
-                 pushes general but never writes the hold file: missing paperwork is not spending in circles.
+                 audit CSV. Why (2026-11-05): an audit ran against a hand-picked subject list, so the great
+                 majority of HOLDS claims were never audited at all. Coverage is every claim dir, so a new
+                 subject can't be skipped. This failure pushes general but never writes the hold file:
+                 missing paperwork is not spending in circles.
 Every research lane is configured, not only one: the point of a lane is something new.
 A lane with `report_only: true` is pushed to general on FAIL but gets no hold file.
 With --act, a failing lane gets its hold file written (its loops stop spending) and a push to general.
@@ -149,7 +149,7 @@ def check_lane(name, cfg, now):
     if missing:
         n = sum(len(v) for v in missing.values())
         per = ', '.join(f'{k} {len(v)}' for k, v in sorted(missing.items(), key=lambda kv: -len(kv[1])))
-        fails.append(f'UNSURFACED: {n} HOLDS claims of {len(missing)} friends never audited ({per})')
+        fails.append(f'UNSURFACED: {n} HOLDS claims of {len(missing)} subjects never audited ({per})')
     return dict(lane=name, as_of=datetime.fromtimestamp(now).isoformat(timespec='minutes'), job_hours=round(hours, 1),
                 attempts=attempts, new_yes=new_yes, verdicts=verdicts, pass_share=round(share, 3), status='FAIL' if fails else 'PASS', fails=fails)
 

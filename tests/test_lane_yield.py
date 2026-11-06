@@ -67,23 +67,25 @@ def test_report_only_lane_gets_no_hold_file(tmp_path, monkeypatch):
     assert hold.exists()
 
 
-def test_unsurfaced_holds_claims_fail_for_any_friend_without_a_hold_file(tmp_path, monkeypatch):
-    # 11-05: the 11-04 audit took a hand-picked friend list; alpha's HOLDS claims were never audited.
+def test_unsurfaced_holds_claims_fail_for_any_subject_without_a_hold_file(tmp_path, monkeypatch):
+    # 11-05: an audit took a hand-picked subject list, so alpha's HOLDS claims were never audited.
+    # The subject label is the claim dir name up to the first underscore, so these ids carry one.
     now = time.time()
     claim(tmp_path / 'claims/beta_M1', True, 'HOLDS', now - 60)
     claim(tmp_path / 'claims/alpha_B6', False, 'HOLDS WITH CAVEATS', now - 60)
     claim(tmp_path / 'claims/alpha_B9', False, 'FAILS', now - 60)
     (tmp_path / 'surface_a').mkdir()
-    (tmp_path / 'surface_a/surface.csv').write_text('id,friend,new\nmanuel_M1,beta,yes\n')
+    (tmp_path / 'surface_a/surface.csv').write_text('id,subject,new\nbeta_M1,beta,yes\n')
     cfg = dict(logs=[], claims=[str(tmp_path / 'claims/*')], hold=str(tmp_path / 'HOLD'),
                surface_audit=dict(claims=[str(tmp_path / 'claims/*')], csv=[str(tmp_path / 'surface_*/surface*.csv')]))
     r = ly.check_lane('f', cfg, now)
-    assert r['status'] == 'FAIL' and r['fails'] == ['UNSURFACED: 1 HOLDS claims of 1 friends never audited (alpha 1)']
+    assert r['status'] == 'FAIL' and r['fails'] == [
+        'UNSURFACED: 1 HOLDS claims of 1 subjects never audited (alpha 1)']
     monkeypatch.setattr(ly.Path, 'home', lambda: tmp_path)  # no real tell-general push
     ly.act(r, cfg)
     assert not (tmp_path / 'HOLD').exists()  # paperwork gap, not spending in circles
     (tmp_path / 'surface_b').mkdir()
-    (tmp_path / 'surface_b/surface_alpha.csv').write_text('id,friend,new\nbruno_B6,alpha,no\n')
+    (tmp_path / 'surface_b/surface_alpha.csv').write_text('id,subject,new\nalpha_B6,alpha,no\n')
     assert ly.check_lane('f', cfg, now)['status'] == 'PASS'
 
 
