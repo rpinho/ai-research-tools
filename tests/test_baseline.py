@@ -113,3 +113,56 @@ def test_a_corrupt_ledger_line_does_not_lose_the_rest(lane):
     with (lane / bl.BASELINES).open('a') as f:
         f.write('{not json\n')
     assert 'good' in rows(lane)
+
+
+def test_the_published_number_can_come_from_a_snapshot(lane):
+    """planets asked for this: a typed number is what this module exists to replace."""
+    (lane / 'snap.json').write_text(json.dumps(
+        {'candidates': [{'tic': '259233660', 'period': 4.2134185}]}))
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'eumemic-rank1',
+                    '--source', 'eumemic table', '--published-from', 'snap.json:candidates.0.period',
+                    '--cmd', 'echo 4.2134185', '--metric', 'days']) == 0
+    row = rows(lane)['eumemic-rank1']
+    assert row['published'] == 4.2134185
+    assert row['published_src']['sha256'] and row['published_src']['value'] == 4.2134185
+
+
+def test_a_jsonl_receipt_works_too(lane):
+    (lane / 'receipt.jsonl').write_text('{"old": 1}\n{"rate": 0.91}\n')
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'recovery', '--source', 'our first run',
+                    '--published-from', 'receipt.jsonl:rate', '--tolerance', '0.01',
+                    '--cmd', 'echo 0.915']) == 0
+
+
+def test_a_missing_key_is_refused_with_the_keys_it_found(lane, capsys):
+    (lane / 'snap.json').write_text(json.dumps({'candidates': []}))
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'x', '--source', 's',
+                    '--published-from', 'snap.json:period', '--cmd', 'echo 1']) == 2
+    assert 'keys:' in capsys.readouterr().err
+
+
+def test_a_non_numeric_value_is_refused(lane):
+    (lane / 'snap.json').write_text(json.dumps({'period': 'unknown'}))
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'x', '--source', 's',
+                    '--published-from', 'snap.json:period', '--cmd', 'echo 1']) == 2
+
+
+def test_both_or_neither_published_is_refused(lane):
+    (lane / 'snap.json').write_text(json.dumps({'period': 1.0}))
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'x', '--source', 's', '--published', '1.0',
+                    '--published-from', 'snap.json:period', '--cmd', 'echo 1']) == 2
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'y', '--source', 's',
+                    '--cmd', 'echo 1']) == 2
+
+
+def test_a_moved_snapshot_is_reported_not_silently_accepted(lane, capsys):
+    """If the table updates, the baseline must be re-registered, not quietly re-compared."""
+    snap = lane / 'snap.json'
+    snap.write_text(json.dumps({'period': 4.0}))
+    assert bl.main(['--lane', str(lane), 'add', '--name', 'p', '--source', 's',
+                    '--published-from', 'snap.json:period', '--cmd', 'echo 4.0']) == 0
+    assert bl.main(['--lane', str(lane), 'run', '--name', 'p']) == 0
+    snap.write_text(json.dumps({'period': 4.5}))
+    assert bl.main(['--lane', str(lane), 'run', '--name', 'p']) == 2
+    out = capsys.readouterr().out
+    assert 'SOURCE' in out and '4.5' in out

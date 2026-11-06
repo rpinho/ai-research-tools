@@ -94,6 +94,65 @@ def extract(text, json_key=None):
     return float(found[-1])
 
 
+def dig(data, dotted):
+    """Walk a dotted path, integers indexing lists: `candidates.0.period`."""
+    node = data
+    for part in dotted.split('.'):
+        if isinstance(node, list):
+            try:
+                node = node[int(part)]
+            except (ValueError, IndexError):
+                raise ValueError('no "{}" at {} (list of {})'.format(part, dotted, len(node)))
+        elif isinstance(node, dict):
+            if part not in node:
+                raise ValueError('no key "{}" at {}; keys: {}'.format(
+                    part, dotted, ', '.join(sorted(node)[:8])))
+            node = node[part]
+        else:
+            raise ValueError('cannot descend into {} at "{}"'.format(type(node).__name__, part))
+    return node
+
+
+def published_from(spec, cwd=None):
+    """FILE:dotted.path -> (value, path, sha256).
+
+    planets asked for this (11-06) so a frozen table snapshot supplies its own known-good value
+    instead of someone typing it in. A typed number is exactly what this module exists to replace,
+    so taking it from the receipt is not a convenience, it is the same rule applied one level up.
+    Accepts a JSON document or a JSONL file, where the last line that parses as an object is used.
+    """
+    path_part, _, key = spec.rpartition(':')
+    if not path_part or not key:
+        raise ValueError('--published-from wants FILE:dotted.path, got ' + spec)
+    path = Path(os.path.expanduser(path_part))
+    if not path.is_absolute() and cwd:
+        path = Path(cwd) / path
+    raw = path.read_bytes()
+    text = raw.decode('utf-8', 'replace')
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+        for line in reversed(text.splitlines()):
+            line = line.strip()
+            if line.startswith('{') or line.startswith('['):
+                try:
+                    data = json.loads(line)
+                    break
+                except ValueError:
+                    continue
+        if data is None:
+            raise ValueError('{} is neither JSON nor JSONL'.format(path))
+    value = dig(data, key)
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        raise ValueError('{} is {}, not a number'.format(key, type(value).__name__))
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError('{} is "{}", which is not a number'.format(key, value))
+    return number, str(path), hashlib.sha256(raw).hexdigest()[:16]
+
+
 def run_command(cmd, cwd=None, timeout=DEFAULT_TIMEOUT):
     proc = subprocess.run(cmd, shell=True, capture_output=True, text=True,
                           cwd=str(cwd) if cwd else None, timeout=timeout)
@@ -149,7 +208,10 @@ def main(argv=None):
     add = sub.add_parser('add', help='register a baseline, only if it reproduces')
     add.add_argument('--name', required=True)
     add.add_argument('--source', required=True, help='DOI, URL or citation the number comes from')
-    add.add_argument('--published', required=True, type=float, help='the number the source reports')
+    add.add_argument('--published', type=float, help='the number the source reports')
+    add.add_argument('--published-from', dest='pub_from', default='',
+                     help='FILE:dotted.path -- take the number from a snapshot receipt instead of '
+                          'typing it; the file is hashed, and a later change to it is reported')
     add.add_argument('--cmd', required=True, help='the command that reproduces it')
     add.add_argument('--metric', default='', help='what the number is (AUROC, bound, days)')
     add.add_argument('--tolerance', type=float, default=DEFAULT_TOLERANCE)
@@ -170,7 +232,21 @@ def main(argv=None):
     cwd = a.cwd or a.lane
 
     if a.action == 'add':
-        row = dict(name=a.name, source=a.source, published=a.published, cmd=a.cmd,
+        pub, pub_src = a.published, None
+        if a.pub_from:
+            if a.published is not None:
+                print('REFUSED: give --published or --published-from, not both', file=sys.stderr)
+                return 2
+            try:
+                pub, path, digest = published_from(a.pub_from, cwd)
+            except (OSError, ValueError) as exc:
+                print('REFUSED: --published-from: {}'.format(exc), file=sys.stderr)
+                return 2
+            pub_src = dict(spec=a.pub_from, path=path, sha256=digest, value=pub)
+        if pub is None:
+            print('REFUSED: one of --published or --published-from is required', file=sys.stderr)
+            return 2
+        row = dict(name=a.name, source=a.source, published=pub, published_src=pub_src, cmd=a.cmd,
                    metric=a.metric, tolerance=a.tolerance, timeout=a.timeout,
                    json_key=a.json_key or None, higher_is_better=a.hib,
                    cmd_sha256=hashlib.sha256(a.cmd.encode()).hexdigest()[:16])
@@ -206,6 +282,22 @@ def main(argv=None):
 
     failed = []
     for row in targets:
+        src = row.get('published_src')
+        if src:
+            # The snapshot is authoritative, so if it has moved, the baseline has to be
+            # re-registered rather than quietly compared against the new number. Loud, not silent:
+            # moving the goalposts inside a `check` is how a comparison stops meaning anything.
+            try:
+                nowval, _, digest = published_from(src['spec'], cwd)
+            except (OSError, ValueError) as exc:
+                print('{:28} SOURCE  cannot re-read {}: {}'.format(row['name'], src['spec'], exc))
+                failed.append(row['name'])
+                continue
+            if nowval != src.get('value') or digest != src.get('sha256'):
+                print('{:28} SOURCE  {} changed: published was {}, now {}'.format(
+                    row['name'], src['spec'], src.get('value'), nowval))
+                failed.append(row['name'])
+                continue
         ok, value, detail = reproduce(row, cwd)
         print('{:28} {}  {}'.format(row['name'], 'ok  ' if ok else 'DRIFT', detail))
         if ok:

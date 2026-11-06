@@ -31,6 +31,19 @@ baseline.py --lane LANE check                # every baseline; non-zero on drift
 baseline.py --lane LANE list
 ```
 
+The published number can come from a snapshot's own receipt instead of being typed, which is the
+same rule one level up: a hand-typed figure is exactly what this replaces.
+
+```sh
+baseline.py --lane LANE add --name NAME --source "the table" \
+    --published-from snapshot.json:candidates.0.period --cmd "..." --metric days
+```
+
+The file is hashed when the baseline is registered. If it later changes, `run` and `check` report
+`SOURCE ... changed: published was X, now Y` and exit non-zero rather than quietly comparing
+against the new number, because moving the goalposts inside a check is how a comparison stops
+meaning anything. JSON and JSONL both work; in a JSONL file the last line that parses is used.
+
 `add` refuses to record anything that does not reproduce, and that refusal is the point: a lane
 cannot write down a baseline it has not run. A result that comes out better than the published
 number still counts as reproducing the method, with `--higher-is-better` or `--lower-is-better`
