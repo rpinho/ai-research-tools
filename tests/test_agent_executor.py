@@ -75,3 +75,36 @@ def test_toy_timeout_terminates_its_owned_process_group(tmp_path):
     pid = int(pidfile.read_text())
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_allowed_tools_defaults_to_read_write_edit_and_can_be_widened():
+    from importlib import util as _u
+    repo = Path(__file__).resolve().parents[1]
+    s = _u.spec_from_file_location('ae2', repo / 'harness/agent_executor.py')
+    ae = _u.module_from_spec(s); s.loader.exec_module(ae)
+    default = ae.command('claude', 'cli', 'm', 'high', '/w', '/o')
+    assert default[default.index('--allowedTools') + 1] == 'Read,Write,Edit'
+    wide = ae.command('claude', 'cli', 'm', 'high', '/w', '/o', '1.00', 'Read,Write,Edit,Bash')
+    assert wide[wide.index('--allowedTools') + 1] == 'Read,Write,Edit,Bash'
+    # There is no --max-turns on this CLI; a run is bounded by spend and the clock.
+    assert '--max-turns' not in default and '--max-budget-usd' in default
+
+
+def test_the_wall_clock_cap_stops_a_hanging_job_without_killing_the_launcher(tmp_path):
+    """The cap must signal the CLI's own process group. If it signalled ours, it would take
+    the launcher with it, which is how a bounded job turns into a dead lane.
+    """
+    import os
+    repo = Path(__file__).resolve().parents[1]
+    fake = tmp_path / 'hang-cli'
+    fake.write_text('#!' + sys.executable + '\nimport time, sys\n'
+                    'sys.stdout.write(\'{"partial":true}\'); sys.stdout.flush()\n'
+                    'time.sleep(600)\n')
+    fake.chmod(0o755)
+    proc = subprocess.run([sys.executable, str(repo / 'harness/agent_executor.py'),
+                           '--backend', 'claude', '--executable', str(fake), '--model', 'm',
+                           '--effort', 'low', '--directory', str(tmp_path),
+                           '--output', str(tmp_path / 'last'), '--timeout-seconds', '2'],
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode == 124, proc.stderr
+    assert 'wall-clock cap' in proc.stderr
