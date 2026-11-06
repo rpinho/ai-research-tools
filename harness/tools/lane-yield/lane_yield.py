@@ -173,7 +173,12 @@ def check_lane(name, cfg, now):
                 if not (start <= t <= end):
                     continue
                 attempts += 1
-                if r.get('new') is True and str(r.get('referee', '')).upper().startswith('HOLDS'):
+                # A reproduction is not a new result (LANE_RULES_COMMON.md, FRONT.md rule 3), and
+                # the referee never sees this ledger. log-result refuses `--new yes --kind rerun`
+                # from 11-06, but rows written before that are still in the ledgers, so skip them
+                # here too rather than count history as yield.
+                if (r.get('new') is True and r.get('kind') != 'rerun'
+                        and str(r.get('referee', '')).upper().startswith('HOLDS')):
                     new_yes += 1
     share = passes / verdicts if verdicts else 0.0
     fails = []

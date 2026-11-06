@@ -1,4 +1,5 @@
 import importlib.util, json, os, time
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -192,3 +193,26 @@ def test_the_outreach_route_is_optional_and_a_corrupt_line_does_not_blind_it(tmp
     # And the good line after the corrupt one is still read.
     assert ly.check_lane('f', dict(base, surface_audit=dict(
         claims=[str(tmp_path / 'claims/*')], outreach=[str(ledger)])), now)['status'] == 'PASS'
+
+
+def test_a_rerun_row_is_not_counted_as_yield(tmp_path):
+    """A reproduction is not a new result, and the friends ledger has a rerun row counted as
+    one. log-result refuses new rerun rows from 11-06; history still holds them.
+    """
+    now = time.time()
+    led = tmp_path / 'RESULTS.jsonl'
+    stamp = datetime.fromtimestamp(now - 600, tz=timezone.utc).isoformat()
+    led.write_text('\n'.join(json.dumps(r) for r in [
+        dict(utc=stamp, new=True, kind='rerun', what='reproduced it', link='x', referee='HOLDS'),
+    ]) + '\n')
+    cfg = dict(logs=[], claims=[], results=[str(led)], hold=str(tmp_path / 'HOLD'),
+               max_job_hours_without_new=20, max_attempts_without_new=1)
+    r = ly.check_lane('f', cfg, now)
+    assert r['attempts'] == 1, 'it still counts as an attempt'
+    assert r['new_yes'] == 0, 'but not as yield'
+    assert any(f.startswith('DRY_ROUNDS') for f in r['fails'])
+    # A real new row in the same ledger does count.
+    with open(led, 'a') as f:
+        f.write(json.dumps(dict(utc=stamp, new=True, kind='value', what='a bound',
+                                link='https://github.com/t/p/pull/9', referee='HOLDS')) + '\n')
+    assert ly.check_lane('f', cfg, now)['new_yes'] == 1

@@ -8,11 +8,44 @@ the referee verdict. lane-yield counts new=true lines with a HOLDS verdict.
     log_result.py --ledger ~/.local/share/research-harness/lanes/math/RESULTS.jsonl \\
         --new yes --kind value --what "C38 bound 0.25 -> 0.2524" --link https://github.com/... --referee HOLDS
 """
-import argparse, json, sys
+import argparse, json, re, sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+HERE = Path(__file__).resolve()
+LINT = HERE.parents[3] / 'tools' / 'result-lint'
+sys.path.insert(0, str(LINT))
+sys.path.insert(0, str(LINT.parent / 'sbs'))
+
 KINDS = ('rerun', 'value', 'question', 'conjecture', 'note', 'other')
+URL = re.compile(r'(?:https?://|doi:|10\.\d{4,9}/)', re.I)
+
+
+def new_errors(kind, link):
+    """Why this `--new yes` row is not admissible, or [] when it is.
+
+    `new_yes` is the number the whole yield test turns on, and it was writeable by assertion:
+    any `--new yes --referee HOLDS` was accepted with no evidence check, and `--kind rerun`
+    counted as new (the friends ledger has one such row). A reproduction is not a new result --
+    LANE_RULES_COMMON.md says so and the referee cannot see this ledger -- so the ledger now
+    asks for the same evidence a claim would need.
+    """
+    if kind == 'rerun':
+        return ['a rerun is not new: reproducing a result is not finding one (--kind rerun '
+                'cannot be --new yes)']
+    target = Path(link).expanduser()
+    if target.is_dir():
+        try:
+            from result_lint import lint
+        except ImportError:
+            # Fail loudly rather than let an unimportable linter wave the row through.
+            return ['result-lint is not importable, so this claim dir cannot be checked; '
+                    'expected it under ' + str(LINT)]
+        return ['claim dir fails result-lint: ' + e for e in lint(target, new_only=True)]
+    if URL.match(link.strip()):
+        return []
+    return ['--new yes needs evidence: a claim directory that passes result-lint, or a PR, '
+            'DOI or other https link. Got neither.']
 
 
 def main(argv=None):
@@ -25,6 +58,12 @@ def main(argv=None):
     p.add_argument('--referee', required=True, help='HOLDS, FAILS or NONE')
     p.add_argument('--utc', help='ISO time of the result (default now)')
     a = p.parse_args(argv)
+    if a.new == 'yes':
+        errors = new_errors(a.kind, a.link)
+        if errors:
+            for e in errors:
+                print('REFUSED: ' + e, file=sys.stderr)
+            return 2
     row = dict(utc=a.utc or datetime.now(timezone.utc).isoformat(timespec='seconds'), new=a.new == 'yes',
                kind=a.kind, what=a.what, link=a.link, referee=a.referee)
     path = Path(a.ledger).expanduser()

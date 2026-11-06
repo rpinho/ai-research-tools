@@ -53,6 +53,21 @@ else
 fi
 [[ -f $spec ]] || { print -u2 -- "missing spec: $spec"; exit 2; }
 log=${spec:r}.log
+# HARD RULE (Ricardo, 11-04): the goal must not turn into process. A spec over the cap needs
+# SPEC_OVER_CAP="<reason>". The count is the job-specific part only (spec_words.py): the sweep
+# embeds the lane's whole RULES.md and INTAKE.toml in its generated specs, which on 11-06 put
+# c5's 472-word ask at 3,047 words and refused every job the sweep generated. Shared blocks
+# added to the prompt below this line are never counted.
+words=$(python3 "${self:h:h}/harness/tools/spec_words.py" "$spec") || exit 2
+cap=${LAUNCH_SPEC_WORD_CAP:-1000}
+if [[ -z $LAUNCH_RESUME ]] && (( words > cap )); then
+  if [[ -z $SPEC_OVER_CAP ]]; then
+    print -u2 -- "launch.sh REFUSED $job: spec is $words job-specific words, over the $cap cap (the goal is turning into process; set SPEC_OVER_CAP=reason)"
+    print -- "exit 2 spec-over-cap $words words $(date)" >> "$log"
+    exit 2
+  fi
+  print -- "spec over cap allowed ($words words): $SPEC_OVER_CAP $(date)" >> "$log"
+fi
 reg=${LAUNCH_STATE:-$PWD/.runtime/job-registry}
 mkdir -p "$reg"
 registry_name=${job//[^A-Za-z0-9_.-]/_}
@@ -69,10 +84,24 @@ else
   cx=${LAUNCH_CLAUDE:-claude}
 fi
 selector=${LAUNCH_SELECTOR:-${self:h:h}/harness/worker_models.py}
+# The lane a job belongs to is its name up to the first separator (friends_new_x -> friends),
+# overridable with LAUNCH_LANE. A missing GOAL.md or an unavailable `rh` is not fatal: a job
+# that cannot read its goal still runs, and the gap shows up in the prompt's absence rather
+# than as a dead lane.
+lane=${LAUNCH_LANE:-${${job:t}%%[-_]*}}
+lane_dir=${LAUNCH_LANE_ROOT:-${LAUNCH_IDEA_ROOT:-$PWD/.runtime}}/lanes/$lane
+lessons=$(rh --root "${LAUNCH_LANE_ROOT:-${LAUNCH_IDEA_ROOT:-$PWD/.runtime}}" lessons for "$lane" -n "${LAUNCH_LESSONS:-12}" 2>/dev/null)
 start=1; [[ -n $LAUNCH_RESUME ]] && start=2
 for (( i = start; i <= 5; i++ )); do
   m=$(python3 "$selector" --role "$LAUNCH_ROLE" --executor "$backend" --model "$LAUNCH_MODEL" --model-override "$LAUNCH_MODEL_OVERRIDE" --log "$log" --receipt "$log.selection.json") || { print -- "exit 2 model-selection-refused $(date)" >> "$log"; exit 2; }
-  { cat "$spec"; (( i > 1 )) && printf '\n\nRESUME (attempt %d): read STATUS.md, REPORT.md and existing files; continue completed work.\n' $i; } > "$log.prompt"
+  # Shared context every job gets, injected here and never counted against the word cap above:
+  # the job rules (prior art first), the lane's goal in the owner's words, and the lessons the
+  # lane has already paid for. Before 11-06 only `rh ideas promote` enforced prior art and only
+  # sweep prompts carried lessons, so 31 of the last 60 specs never mentioned either.
+  { [[ ! -f ${self:h}/RULES.md ]] || { cat "${self:h}/RULES.md"; printf '\n---\n\n'; }
+    [[ ! -f $lane_dir/GOAL.md ]] || { printf -- '--- LANE GOAL (%s, the owner'\''s words; agents never edit it) ---\n' "$lane"; cat "$lane_dir/GOAL.md"; printf '\n---\n\n'; }
+    [[ -z $lessons ]] || { printf -- '--- LESSONS THIS LANE ALREADY PAID FOR ---\n%s\n---\n\n' "$lessons"; }
+    cat "$spec"; (( i > 1 )) && printf '\n\nRESUME (attempt %d): read STATUS.md, REPORT.md and existing files; continue completed work.\n' $i; } > "$log.prompt"
   print -- "=== attempt $i model $m $(date)" >> "$log"
   attempt_log="$log.attempt-$i"
   nice -n 10 python3 "${self:h:h}/harness/agent_executor.py" --backend "$backend" \
