@@ -49,7 +49,9 @@ scores cannot prevent earlier hidden-set reads. Ledgers are locked and hash-chai
 the owner must protect their files against replacement. Neither version verifies
 that declared units, independence or training behavior correspond to reality.
 
-Version 2 can rank several permitted submissions by mean − 1.96 SEM. The separate
+Version 2 can rank several permitted submissions by mean − t·SEM, using the two-sided
+95% Student t quantile on df = n−1 rather than 1.96, which is only the limiting case
+and is too narrow when measurements are few. The separate
 advisory `best_of_choice` helper models an explicitly best-of-many board; it is not
 used by the default gate or toy run, and requires scores on the same sealed scale.
 

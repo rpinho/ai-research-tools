@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from selection_gate import (decide, bootstrap_diff, backtests, backtest_summary,
-                            simple_average_ensemble, write_receipt, verify_receipt)
+                            simple_average_ensemble, write_receipt, verify_receipt,
+                            paired_diff, forecast_diversity, t95)
 from selection_gate.policy import (validate_policy, read_ledger, scoring_ledger_error,
                                    optimism_prior, record_optimism)
 
@@ -98,7 +99,15 @@ def test_practice_2_ten_independent_measurements_and_explicit_waiver(tmp_path):
     p['measurement_waiver'] = dict(reason='This lane has a measured two-run compute ceiling.')
     d = run(tmp_path/'pass', data, p)
     assert d['measurement_waiver'] == p['measurement_waiver']
-    assert d['finalists'][0]['margin'] == 2*d['finalists'][0]['sem']
+    # A two-measurement waiver has one degree of freedom, where 1.96 is not close: the t
+    # multiplier is 12.706, so the margin is 6.4 times the old 2 SEM. This is the case
+    # Hugo's 11-07 update is about, and the lane that waives its way down to two
+    # measurements is the one that most needs the wider interval.
+    row = d['finalists'][0]
+    assert row['margin_quantile'] == 12.706
+    assert row['margin'] == pytest.approx(12.706*row['sem'])
+    assert row['margin'] > 6*2*row['sem']
+    assert d['interval'] == 't95'
     fresh['seed_ids'] = ['same', 'same']
     with pytest.raises(ValueError, match='unique'):
         run(tmp_path/'duplicates', data, p)
@@ -268,14 +277,19 @@ def test_practice_9_every_scoring_is_ledgered_budget_and_fixed_set_enforced(tmp_
     assert not d['accepted'] and len(read_ledger(tmp_path/'rejected/SEALED_SCORING.jsonl')) == 1
 
 
-def test_practice_10_submissions_rank_by_mean_minus_196_sem(tmp_path):
+def test_practice_10_submissions_rank_by_mean_minus_t_sem(tmp_path):
     data = inputs()
     data['finalists'][2]['sealed_scores'] = [59, 65]*5  # highest mean, highest uncertainty
     d = run(tmp_path, data, dict(protocol(), submissions=2))
     eligible = sorted((r for r in d['finalists'] if r['accepted']), key=lambda r: -r['submission_score'])
     assert d['selected_submissions'] == [r['name'] for r in eligible[:2]]
-    assert d['selected_submissions'] == ['b', 'c']
+    # With 1.96 this was ['b', 'c']: the noisiest candidate kept the second slot. On ten
+    # measurements the multiplier is 2.262, which costs c more than its higher mean gains,
+    # and the steadier 'a' takes the slot. The ranking is the only thing that changed; c is
+    # still the highest mean and still not the one submitted first.
+    assert d['selected_submissions'] == ['b', 'a']
     assert d['selected'] == 'b' and d['best'] == 'c'
+    assert all(r['margin_quantile'] == 2.262 for r in d['finalists'])
     with pytest.raises(ValueError, match='submissions'):
         validate_policy(dict(protocol(), submissions=0))
     assert len(run(tmp_path/'default')['selected_submissions']) == 1
@@ -379,3 +393,115 @@ def test_prior_snapshot_remains_valid_during_concurrent_competitions(tmp_path):
     saved = record_optimism(path, 'current', 'current', [10]*3, prior_sha256=head)
     assert optimism_prior(path, 'current', through_sha256=saved['prior_sha256']) == prior
     assert optimism_prior(path, 'current') == 20
+
+
+# Hugo Fernandes' two updates of 2026-11-07 to his own ten practices.
+
+def test_t_quantile_replaces_196_when_measurements_are_few():
+    assert t95(2) == 12.706 and t95(3) == 4.303 and t95(10) == 2.262
+    assert t95(11) == 2.228 and t95(31) == 2.042
+    assert t95(36) == pytest.approx(2.0315, abs=1e-3)   # interpolated between df 30 and 40
+    assert t95(400) == 1.96                             # the normal case, within 1%
+    assert all(t95(n) >= 1.96 for n in range(2, 500))   # never narrower than the old gate
+    with pytest.raises(ValueError):
+        t95(1)
+
+
+def test_paired_comparison_on_matched_seeds_is_narrower():
+    """Hugo measured 3 to 10 times narrower. A shared per-seed effect is why: here the two
+    candidates move together seed by seed, and the difference is steady even though each
+    one's own scores are not."""
+    shared = np.array([0., 9., -6., 4., -7., 11., -3., 2., 5., -8.])
+    jitter = np.array([.02, -.01, .03, 0., -.02, .01, .02, -.03, .01, -.01])
+    candidate = 61 + shared + jitter
+    reference = 60 + shared
+    paired = paired_diff(candidate, reference)
+    assert paired['difference'] == pytest.approx(1, abs=.01)
+    assert paired['sd'] < .03
+    assert paired['ci_low'] > 0 and paired['ci_high'] > 0
+    assert paired['quantile'] == 2.262
+    # Unpaired, the same evidence cannot separate them at all.
+    unpaired_low = (candidate.mean()-reference.mean()
+                    - 2.262*math.sqrt(candidate.var(ddof=1)/10 + reference.var(ddof=1)/10))
+    assert unpaired_low < 0
+    assert paired['narrowing'] > 10
+    with pytest.raises(ValueError, match='same measurements'):
+        paired_diff([1, 2, 3], [1, 2])
+
+
+def test_paired_baseline_scores_become_an_acceptance_condition(tmp_path):
+    data = inputs()
+    ids = data['evidence']['fresh']['measurement_ids']
+    # A baseline that beats every candidate on the matched seeds, while its mean is lower.
+    data['evidence']['baseline_sealed_scores'] = [99]*len(ids)
+    d = run(tmp_path/'loses', data)
+    assert not d['accepted']
+    assert all(r['paired_baseline']['ci_high'] < 0 for r in d['finalists'])
+    # Supplying nothing keeps the old behaviour, and says so rather than implying a pass.
+    plain = run(tmp_path/'absent')
+    assert plain['accepted'] and all(r['paired_baseline'] is None for r in plain['finalists'])
+    data['evidence']['baseline_sealed_scores'] = [50]*len(ids)
+    good = run(tmp_path/'beats', data)
+    assert good['accepted'] and good['finalists'][0]['paired_baseline']['ci_low'] > 0
+    data['evidence']['baseline_sealed_scores'] = [50]*3
+    with pytest.raises(ValueError, match='baseline sealed scores'):
+        run(tmp_path/'ragged', data)
+
+
+def test_the_ranking_against_the_leader_is_reported_on_matched_seeds(tmp_path):
+    d = run(tmp_path)
+    leader = d['best']
+    rows = {r['name']: r for r in d['finalists']}
+    assert rows[leader]['paired_vs_best'] is None
+    for name, row in rows.items():
+        if name != leader:
+            assert row['paired_vs_best']['n_measurements'] == row['n_measurements']
+            assert row['paired_vs_best']['difference'] < 0
+    # c beats b by 1 on every one of the ten matched seeds, so the ranking is real.
+    assert d['best_separated_from_runner_up'] is True
+
+
+def test_a_ranking_too_close_to_call_is_reported_not_refused(tmp_path):
+    data = inputs()
+    # b and c differ by a hair, with the per-seed noise far bigger than the gap.
+    data['finalists'][1]['sealed_scores'] = [55, 67]*5
+    data['finalists'][2]['sealed_scores'] = [56, 66]*5
+    d = run(tmp_path, data)
+    assert d['accepted'], 'an unseparated ranking is still a result'
+    assert d['best_separated_from_runner_up'] is False
+
+
+def test_diversity_comes_from_the_forecasts_not_the_labels():
+    members = {'a': [1., 2., 3., 4.], 'b': [1., 2., 3., 4.], 'c': [4., 3., 2., 1.]}
+    identical = forecast_diversity({'a': members['a'], 'b': members['b']})
+    assert identical['disagreement'] == 0 and identical['error_correlation'] is None
+    assert identical['source'] == 'forecasts'
+    different = forecast_diversity({'a': members['a'], 'c': members['c']})
+    assert different['disagreement'] > 0
+    # Errors against the truth are what predicts ensemble gain: these two are anticorrelated.
+    labelled = forecast_diversity({'a': members['a'], 'c': members['c']}, labels=[2.5]*4)
+    assert labelled['error_correlation'] == pytest.approx(-1)
+    assert labelled['error_correlation_pairs'] == 1
+    # No labels needed at all, which is the point: it works on unlabeled data.
+    with pytest.raises(ValueError, match='two members'):
+        forecast_diversity({'a': members['a']})
+    with pytest.raises(ValueError, match='match the forecast items'):
+        forecast_diversity({'a': members['a'], 'c': members['c']}, labels=[1, 2])
+
+
+def test_the_ensemble_reports_measured_diversity_and_equal_weights(tmp_path):
+    d = run(tmp_path, ensemble_scorer=lambda p: p)
+    row = d['finalists'][-1]
+    assert row['ensemble_method'] == 'simple_average'
+    assert row['weights_fixed_before_scores'] is True
+    assert row['diversity']['members'] == ['a', 'b', 'c']
+    assert row['diversity']['source'] == 'forecasts'
+    assert row['diversity']['disagreement'] > 0
+
+
+def test_diversity_cannot_be_declared_or_argued_from_subgroups(tmp_path):
+    for key in ('diversity', 'subgroup_scores', 'diversity_by_subgroup'):
+        data = inputs()
+        data['evidence'][key] = {'group-1': 0.9, 'group-2': 0.4}
+        with pytest.raises(ValueError, match='subgroup performance|measured from the member'):
+            run(tmp_path/('declared-'+key), data)

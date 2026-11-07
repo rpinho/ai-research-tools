@@ -15,6 +15,57 @@ def _scores(values, label, minimum=2):
     return scores
 
 
+# Two-sided 95% Student t quantiles by degrees of freedom. 1.96 is the df = infinity case, so
+# using it with ten measurements understates the interval by about 14%, and with three by more
+# than twice. Hugo Fernandes, 2026-11-07: use the t quantile when seeds are few. Values beyond
+# the table are interpolated; past df 120 the normal quantile is within 1%.
+T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365, 8: 2.306,
+       9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145, 15: 2.131, 16: 2.120,
+       17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 21: 2.080, 22: 2.074, 23: 2.069, 24: 2.064,
+       25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048, 29: 2.045, 30: 2.042, 40: 2.021, 50: 2.009,
+       60: 2.000, 80: 1.990, 100: 1.984, 120: 1.980}
+NORMAL95 = 1.96
+
+
+def t95(n):
+    """The two-sided 95% t multiplier for n measurements (df = n-1). Never below 1.96."""
+    n = integer(n, 2, 'measurements for a t interval')
+    df = n - 1
+    if df in T95:
+        return T95[df]
+    keys = sorted(T95)
+    if df > keys[-1]:
+        return NORMAL95
+    low = max(k for k in keys if k < df)
+    high = min(k for k in keys if k > df)
+    return T95[low] + (T95[high]-T95[low]) * (df-low) / (high-low)
+
+
+def paired_diff(candidate, reference, n=None):
+    """Paired t interval on matched measurements: the same seeds, the same windows.
+
+    Why paired (Hugo Fernandes, 2026-11-07): a seed or an evaluation window moves both
+    candidates together, so differencing on matched ids cancels it. His own runs came out 3 to
+    10 times narrower this way, and the noise that mattered most was the evaluation windows
+    rather than the seeds. An unpaired comparison pays for that shared noise twice.
+    """
+    candidate = _scores(candidate, 'paired candidate scores')
+    reference = _scores(reference, 'paired reference scores')
+    if len(candidate) != len(reference):
+        raise ValueError('a paired comparison requires the same measurements for both')
+    deltas = candidate - reference
+    k = len(deltas)
+    sd = float(deltas.std(ddof=1))
+    sem = sd / math.sqrt(k)
+    q = t95(k)
+    mean = float(deltas.mean())
+    unpaired = math.sqrt(float(candidate.var(ddof=1))/k + float(reference.var(ddof=1))/k)
+    return dict(difference=mean, sd=sd, sem=sem, quantile=q,
+                ci_low=mean - q*sem, ci_high=mean + q*sem, n_measurements=k,
+                unpaired_sem=unpaired,
+                narrowing=float(unpaired/sem) if sem > 0 else None)
+
+
 def bootstrap_diff(candidate, baseline, units, n=2000, *, seed=0):
     """Paired cluster bootstrap, equal weight per independent unit, never rows.
 
@@ -133,7 +184,57 @@ def backtests(candidates, windows, score, *, baseline, min_train=1, test_size=1,
     return dict(splits=splits, scores=scores, baseline=baseline, summaries=summaries)
 
 
-def simple_average_ensemble(finalists, scorer):
+def forecast_diversity(members, labels=None):
+    """Diversity from the forecasts themselves: error correlation, or plain disagreement.
+
+    Why not subgroup performance (Hugo Fernandes, 2026-11-07): slicing by subgroup and
+    comparing scores reuses the labels, so the diversity number inherits the same selection
+    problem the gate exists to contain, and it is measured on exactly the data you are trying
+    not to fit. Forecast disagreement needs no labels at all. With labels, the quantity that
+    predicts ensemble gain is the correlation of the members' errors, not of their predictions.
+
+    `members` maps a name to a flat sequence of forecasts, all the same length. Returns mean
+    pairwise error correlation (with labels) and mean pairwise disagreement (always), where
+    disagreement is the SD across members per item, averaged over items and scaled by the
+    spread of the forecasts, so it is comparable between problems.
+    """
+    if not isinstance(members, dict) or len(members) < 2:
+        raise ValueError('diversity needs the forecasts of at least two members')
+    names = sorted(members)
+    stacked = []
+    for name in names:
+        values = np.asarray(members[name], dtype=float).ravel()
+        if len(values) < 2 or not np.isfinite(values).all():
+            raise ValueError('member ' + str(name) + ' needs finite forecasts')
+        if stacked and len(values) != len(stacked[0]):
+            raise ValueError('members must forecast the same items in the same order')
+        stacked.append(values)
+    matrix = np.stack(stacked)
+    spread = float(matrix.std())
+    per_item = matrix.std(axis=0, ddof=1)
+    result = dict(members=names, n_items=int(matrix.shape[1]),
+                  disagreement=float(per_item.mean()),
+                  disagreement_scaled=float(per_item.mean()/spread) if spread > 0 else 0.0,
+                  error_correlation=None, source='forecasts')
+    if labels is None:
+        return result
+    truth = np.asarray(labels, dtype=float).ravel()
+    if len(truth) != matrix.shape[1] or not np.isfinite(truth).all():
+        raise ValueError('labels must be finite and match the forecast items')
+    errors = matrix - truth
+    pairs = []
+    for i in range(len(names)):
+        for j in range(i+1, len(names)):
+            a, b = errors[i], errors[j]
+            if a.std() == 0 or b.std() == 0:
+                continue
+            pairs.append(float(np.corrcoef(a, b)[0, 1]))
+    result['error_correlation'] = float(np.mean(pairs)) if pairs else None
+    result['error_correlation_pairs'] = len(pairs)
+    return result
+
+
+def simple_average_ensemble(finalists, scorer, labels=None):
     """Average predictions before scoring; no fitted weights or metric averaging.
 
     scorer(prediction) returns either additive per-row metric contributions or
@@ -144,7 +245,8 @@ def simple_average_ensemble(finalists, scorer):
     if len(finalists) < 2 or not callable(scorer):
         raise ValueError('simple-average ensemble requires finalists and a scorer')
     result = dict(name='simple_average', measurement_ids=finalists[0]['measurement_ids'],
-                  ensemble_method='simple_average', members=[c['name'] for c in finalists])
+                  ensemble_method='simple_average', members=[c['name'] for c in finalists],
+                  weights_fixed_before_scores=True)
     for source, destination in (('sealed_predictions', 'sealed_scores'), ('backtest_predictions', 'backtest_scores')):
         predictions = []
         for candidate in finalists:
@@ -177,6 +279,14 @@ def simple_average_ensemble(finalists, scorer):
             if any(len(x) != len(contributions[0]) for x in contributions):
                 raise ValueError('ensemble scorer returned unpaired sealed units')
             result['unit_scores'] = np.mean(contributions, axis=0).tolist()
+    # Equal weights, and the diversity that justifies averaging measured on the members' own
+    # forecasts. It is reported, not a gate: the honest use is to see whether an ensemble of
+    # near-identical models was worth its compute, and refusing on a threshold would be a
+    # number nobody has calibrated.
+    result['diversity'] = forecast_diversity(
+        {c['name']: np.concatenate([np.asarray(v, dtype=float).ravel()
+                                    for v in c['sealed_predictions']]) for c in finalists},
+        labels=labels)
     return result
 
 
@@ -200,6 +310,11 @@ def evaluate_v2(finalists, floor, n_candidates, margin_sd, policy, evidence, *, 
         raise ValueError('v2 requires fresh rerun and independent-unit evidence')
     if any(key in evidence for key in ('weights', 'ensemble_weights', 'ensemble_method')):
         raise ValueError('fitted weights and caller-supplied ensembles are forbidden')
+    # Diversity is measured here from the member forecasts, never declared, and never argued
+    # from subgroup scores: slicing by subgroup to show models differ reuses the labels.
+    if any(key in evidence for key in ('diversity', 'subgroup_scores', 'diversity_by_subgroup')):
+        raise ValueError('diversity is measured from the member forecasts, not declared, and '
+                         'not argued from subgroup performance, which reuses the labels')
     trials = trial_records(evidence.get('trials'))
     integer(n_candidates, 1, 'n_candidates')
     if n_candidates != len(trials) or n_candidates < policy['n_trials_total']:
@@ -249,12 +364,20 @@ def evaluate_v2(finalists, floor, n_candidates, margin_sd, policy, evidence, *, 
     # Baseline must be evaluated on the identical fresh measurement schedule.
     if evidence.get('baseline_measurement_ids') != measurement_ids:
         raise ValueError('baseline must use the same sealed measurements')
+    # Per-measurement baseline scores, when supplied, buy the paired comparison: every
+    # candidate must beat the baseline on the matched seeds and windows, not only on average.
+    baseline_sealed = evidence.get('baseline_sealed_scores')
+    if baseline_sealed is not None:
+        baseline_sealed = _scores(baseline_sealed, 'baseline sealed scores', minimum)
+        if len(baseline_sealed) != len(measurement_ids):
+            raise ValueError('baseline sealed scores must match the sealed measurement ids')
     all_finalists = list(finalists)
     for candidate in finalists:
         if any(k in candidate for k in ('weights', 'ensemble_weights', 'ensemble_method', 'members')):
             raise ValueError('fitted weights and caller-supplied ensembles are forbidden')
     if ensemble_scorer is not None:
-        all_finalists.append(simple_average_ensemble(finalists, ensemble_scorer))
+        all_finalists.append(simple_average_ensemble(finalists, ensemble_scorer,
+                                                     labels=evidence.get('sealed_labels')))
     k = len(all_finalists)
     rows = []
     for candidate in all_finalists:
@@ -274,22 +397,43 @@ def evaluate_v2(finalists, floor, n_candidates, margin_sd, policy, evidence, *, 
         sd = float(scores.std(ddof=1))
         mean, sem = float(scores.mean()), sd/math.sqrt(len(scores))
         bias, search_bias = optimism(sd, k), optimism(sd, n_candidates)
-        lower = mean-bias-2*sem
-        accepted = lower > floor and ci['ci_low'] > 0 and bt['passed']
+        # The t quantile, not 1.96: with ten measurements 1.96 understates the interval, and a
+        # measurement waiver can take a lane to three.
+        quantile = t95(len(scores))
+        lower = mean-bias-quantile*sem
+        paired = paired_diff(scores, baseline_sealed) if baseline_sealed is not None else None
+        accepted = (lower > floor and ci['ci_low'] > 0 and bt['passed']
+                    and (paired is None or paired['ci_low'] > 0))
         row = dict(name=name, sealed_scores=scores.tolist(), n_measurements=len(scores), n_seeds=len(seeds), measurement_kind=kind, mean=mean, sd=sd, sem=sem,
-                   optimism=bias, search_optimism=search_bias, margin=2*sem, lower_bound=lower,
+                   optimism=bias, search_optimism=search_bias, margin=quantile*sem,
+                   margin_quantile=quantile, lower_bound=lower,
                    expected=mean-max(search_bias, prior), bootstrap=ci, backtests=bt,
-                   submission_score=mean-1.96*sem, accepted=bool(accepted))
+                   paired_baseline=paired,
+                   submission_score=mean-quantile*sem, accepted=bool(accepted))
         if name in tuned_by_name:
             row.update(tuned_score=tuned_by_name[name], optimism_drop=tuned_by_name[name]-mean)
         else:
-            row.update(ensemble_method='simple_average', members=candidate['members'])
+            row.update(ensemble_method='simple_average', members=candidate['members'],
+                       weights_fixed_before_scores=True, diversity=candidate['diversity'])
         rows.append(row)
     eligible = sorted((r for r in rows if r['accepted']), key=lambda r: -r['submission_score'])
     selected = [r['name'] for r in eligible[:policy.get('submissions', 1)]]
     best = max(rows, key=lambda r: r['mean'])
+    # Candidates are compared to the leader on the matched measurements they all share, which
+    # is the comparison that answers "is this ranking real?". It needs no extra evidence,
+    # because every finalist is already required to use the same measurement ids. Recorded,
+    # not an acceptance condition: a ranking too close to call is still a real result, and the
+    # honest report is the interval, not a refusal.
+    leader = next(r for r in rows if r['name'] == best['name'])
+    for row in rows:
+        row['paired_vs_best'] = (None if row['name'] == leader['name'] else
+                                 paired_diff(row['sealed_scores'], leader['sealed_scores']))
+    runner_up = max((r for r in rows if r['name'] != leader['name']),
+                    key=lambda r: r['mean'], default=None)
+    separated = bool(runner_up and runner_up['paired_vs_best']['ci_high'] < 0)
     return dict(policy_version=2, floor=floor, n_candidates=n_candidates, n_trials_total=n_candidates,
-                n_finalists=k, margin_sd=2.0, finalists=rows, best=best['name'],
+                n_finalists=k, margin_sd=2.0, interval='t95', finalists=rows, best=best['name'],
+                best_separated_from_runner_up=separated,
                 accepted=bool(selected), selected=selected[0] if selected else 'floor',
                 selected_submissions=selected, submissions=policy.get('submissions', 1),
                 expected=best['expected'], search_optimism=best['search_optimism'], optimism_prior=prior,

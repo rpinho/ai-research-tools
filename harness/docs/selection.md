@@ -99,7 +99,9 @@ admission, freeze integrity, and prior-art checks continue to apply.
 ## Fresh evidence
 
 `fresh-evidence.json` contains `finalists`, `floor`, `n_candidates`, and `evidence`.
-Optional `margin_sd` must equal 2. Each finalist contains:
+Optional `margin_sd` must equal 2; it declares the two-sided 95% convention, and the
+multiplier actually applied is the Student t quantile for the number of measurements,
+recorded per finalist as `margin_quantile` and never below 1.96. Each finalist contains:
 
 - `name`, matching a completed trial; `sealed_scores` (at least 10 by default).
 - `measurement_ids`, exactly equal to `evidence.fresh.measurement_ids` in order.
@@ -119,6 +121,17 @@ The `evidence` object contains:
   Repeated labels are grouped before bootstrap, never sampled as separate units.
   `baseline_unit_scores` pairs with these same observations, and
   `baseline_measurement_ids` must match the fresh schedule.
+- Optional `baseline_sealed_scores`: the baseline's own score on each sealed
+  measurement, in `measurement_ids` order. Supplying it adds the paired
+  comparison from practice 2 as an acceptance condition, so a candidate must beat
+  the baseline on the matched seeds and windows and not only on average. A seed or
+  an evaluation window moves both together, so the paired interval is usually much
+  narrower than the unpaired one; each finalist's row reports `narrowing`.
+- Optional `sealed_labels`: the truth for the sealed items, which lets the
+  simple-average ensemble report the members' mean pairwise **error** correlation
+  as well as their label-free disagreement. `diversity`, `subgroup_scores` and
+  `diversity_by_subgroup` are refused: diversity is measured from the forecasts,
+  never declared, and never argued from subgroup performance, which reuses labels.
 - `baseline_backtest_scores`, unique `backtest_split_ids` drawn from the fresh
   split IDs, and `backtest_splits` in the same order. Each split has nonempty
   `train_units` and `test_units`; held-out units cannot overlap training or any

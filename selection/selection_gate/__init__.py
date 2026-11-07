@@ -122,4 +122,5 @@ def trajectory_scan(paths, forbidden_patterns):
 
 
 # New helpers are opt-in; the legacy arithmetic and receipt format above are unchanged.
-from .v2 import bootstrap_diff, backtests, backtest_summary, simple_average_ensemble, score_and_decide
+from .v2 import (bootstrap_diff, backtests, backtest_summary, simple_average_ensemble,
+                 score_and_decide, paired_diff, forecast_diversity, t95)
