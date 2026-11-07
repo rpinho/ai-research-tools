@@ -26,6 +26,25 @@ def test_parse_launcher_stamps():
     assert ly.parse_stamp('exit') is None
 
 
+def test_a_stopped_job_closes_its_run():
+    """The exit reason is free text. 'exit stopped by job-stop' used to parse as nothing, so the
+    run never closed and job_hours counted it as running until now (216 h for three VE jobs)."""
+    for reason in ('0', '137', 'stopped by job-stop', 'stopped by signal', 'stopped by operator'):
+        line = f'exit {reason} Mon Nov  2 16:48:56 EST 2026'
+        assert ly.parse_stamp(line) is not None, line
+
+
+def test_job_hours_does_not_count_a_stopped_job_as_still_running(tmp_path):
+    log = tmp_path / 've.log'
+    log.write_text('=== attempt 1 model gpt-6.1-sol Mon Nov  2 16:48:13 EST 2026\nwork\n'
+                   'exit stopped by job-stop Mon Nov  2 16:48:47 EST 2026\n'
+                   'exit stopped by signal Mon Nov  2 16:48:56 EST 2026\n')
+    start = ly.parse_stamp('exit 0 Mon Nov  2 00:00:00 EST 2026')
+    end = ly.parse_stamp('exit 0 Wed Nov  4 00:00:00 EST 2026')  # two days later, nothing running
+    hours = ly.job_hours([str(log)], start, end)
+    assert hours < 0.02, hours  # the real run was 34 seconds
+
+
 def test_burning_lane_fails_and_new_result_passes(tmp_path):
     log = tmp_path / 'lane_a.log'; write_log(log, 23)
     now = ly.parse_stamp('exit 0 Tue Nov  3 23:30:00 EST 2026')

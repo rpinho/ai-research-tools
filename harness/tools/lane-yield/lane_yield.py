@@ -87,7 +87,12 @@ def dry_tail(rows):
             pass
     same = families[0] if families and len(set(families)) == 1 else None
     return streak, same, spend
-STAMP = re.compile(r'^(?:=== (?:run|attempt) .*?|exit \S+ )([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d:\d\d) \S+ (\d{4})\s*$')
+# The exit reason is free text, not one token: the launcher writes "exit 0", "exit stopped by
+# job-stop" and "exit stopped by signal". Before 11-06 this read `exit \S+ `, so every job a
+# human or a job-stop ended never closed its run, and job_hours counted it as still running
+# until now. Three stopped virtual-embryo jobs added 216 h and marked the lane BURNING with
+# nothing running. A yield test that invents spending stops a lane that should be working.
+STAMP = re.compile(r'^(?:=== (?:run|attempt) .*?|exit .*?)([A-Z][a-z]{2} [A-Z][a-z]{2} +\d+ \d\d:\d\d:\d\d) \S+ (\d{4})\s*$')
 
 
 def parse_stamp(line):
